@@ -29,8 +29,7 @@ class reflexmirrorSettings(
     private val studios: List<StudioOption>
 ) : BottomSheetDialogFragment() {
 
-    private val packageName: String 
-        get() = plugin.context?.packageName ?: "com.reflex1337.reflexmirror"
+    private val packageName: String = "com.reflex1337.reflexmirror"
 
     private val enabledStudios = studios.filter { isStudioEnabled(it) }
         .map { it.key }
