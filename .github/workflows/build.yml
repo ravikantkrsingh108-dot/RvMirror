@@ -51,7 +51,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/src
           chmod +x gradlew
-          ./gradlew :LibraryOfLadev:make :LibraryOfLadev:makePluginsJson
+          ./gradlew make makePluginsJson -x :ReflexMirror:make
 
           # Copy files (fail safely if directory doesn't exist)
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No .cs3 files found"
