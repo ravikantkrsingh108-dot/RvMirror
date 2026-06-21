@@ -66,6 +66,13 @@ class PrimeVideoMirrorProvider : MainAPI() {
         val items = document.select(".tray-container, #top10").map {
             it.toHomePageList()
         }
+
+        // Passively record every id shown, so the Custom Catalog self-populates.
+        val seenIds = document.select("article, .top10-post").mapNotNull {
+            (it.selectFirst("a")?.attr("data-post")?.ifBlank { null }) ?: it.attr("data-post").ifBlank { null }
+        }
+        NetflixMirrorStorage.addBareIds("pv", seenIds)
+
         return newHomePageResponse(items, false)
     }
 
@@ -145,6 +152,14 @@ class PrimeVideoMirrorProvider : MainAPI() {
                 posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
+
+        // Record this title (type + genres) and its suggestions for the Custom Catalog.
+        NetflixMirrorStorage.addRich(
+            "pv", id,
+            if (data.episodes.first() == null) "m" else "s",
+            genre ?: emptyList()
+        )
+        NetflixMirrorStorage.addBareIds("pv", data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         if (data.episodes.first() == null) {
             episodes.add(newEpisode(LoadData(title, id)) {

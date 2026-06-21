@@ -71,7 +71,7 @@ class NetflixMirrorProvider : MainAPI() {
         val seenIds = document.select("article, .top10-post").mapNotNull {
             (it.selectFirst("a")?.attr("data-post")?.ifBlank { null }) ?: it.attr("data-post").ifBlank { null }
         }
-        NetflixMirrorStorage.addIds("nf", seenIds)
+        NetflixMirrorStorage.addBareIds("nf", seenIds)
 
         return newHomePageResponse(items, false)
     }
@@ -152,8 +152,13 @@ class NetflixMirrorProvider : MainAPI() {
             }
         }
 
-        // Record this title + its suggestions to grow the Custom Catalog.
-        NetflixMirrorStorage.addIds("nf", listOf(id) + (data.suggest?.mapNotNull { it.id } ?: emptyList()))
+        // Record this title (type + genres) and its suggestions for the Custom Catalog.
+        NetflixMirrorStorage.addRich(
+            "nf", id,
+            if (data.episodes.first() == null) "m" else "s",
+            genre ?: emptyList()
+        )
+        NetflixMirrorStorage.addBareIds("nf", data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         if (data.episodes.first() == null) {
             episodes.add(newEpisode(LoadData(title, id)) {

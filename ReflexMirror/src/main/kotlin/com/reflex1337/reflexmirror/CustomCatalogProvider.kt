@@ -13,16 +13,23 @@ import okhttp3.Response
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
 /**
- * A catalog whose home page is driven entirely by [CustomCatalogIds].
+ * A single catalog that aggregates Netflix / Prime Video / Hotstar content into
+ * grouped, genre-tagged rows. It is driven by ids collected passively while the
+ * user browses those providers (see NetflixMirrorStorage), so it grows itself.
  *
- * Unlike the Netflix provider (which shows only the server-curated trays),
- * this lists every id you put in [CustomCatalogIds.ids] as a card, paginated
- * automatically. Playback / details reuse the Netflix backend (ott = "nf").
+ * Rows produced (only non-empty ones show):
+ *   - "<Source> Movies", "<Source> Series" — titles whose type is known
+ *   - "<Source> • More"                    — collected but not-yet-opened ids
+ *   - genre rows ("Horror", "Drama", ...)  — aggregated across all sources
+ *
+ * Each card carries its source (ott) so playback is routed to the right backend.
  */
 class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
-        private const val PAGE_SIZE = 20
+        private const val ROW_LIMIT = 60      // max cards rendered per row
+        private const val MAX_GENRE_ROWS = 15
+        private const val MIN_GENRE_SIZE = 3
     }
 
     override val supportedTypes = setOf(
@@ -32,16 +39,11 @@ class CustomCatalogProvider : MainAPI() {
         TvType.AsianDrama
     )
     override var lang = "en"
-
     override var mainUrl = "https://net52.cc"
     override var name = "Custom Catalog"
-
     override val hasMainPage = true
-    private var cookie_value = ""
 
-    // Randomized display order, rebuilt whenever the user reopens the catalog
-    // (page 1) and kept stable while scrolling so pages never repeat/skip.
-    private var shuffledIds: List<String> = emptyList()
+    private var cookie_value = ""
     private val headers = mapOf(
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
@@ -59,127 +61,157 @@ class CustomCatalogProvider : MainAPI() {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // On a fresh open (page 1), rebuild from manual ids + ids collected while
-        // browsing Netflix, then shuffle so the grid feels different every time.
-        if (page <= 1 || shuffledIds.isEmpty()) {
-            val merged = LinkedHashSet<String>().apply {
-                addAll(CustomCatalogIds.ids)
-                addAll(NetflixMirrorStorage.getIds("nf"))
-            }
-            shuffledIds = merged.toList().shuffled()
-        }
+    // Per-source routing config. path = url segment after /mobile/; poster/backdrop
+    // are imgcdn.kim directories; epDir is the episode-thumbnail directory.
+    private data class Ott(
+        val code: String,
+        val label: String,
+        val path: String,
+        val poster: String,
+        val backdrop: String,
+        val epDir: String
+    )
 
-        val all = shuffledIds
-        val start = (page - 1) * PAGE_SIZE
-        val slice = if (start >= all.size) {
-            emptyList()
-        } else {
-            all.subList(start, minOf(start + PAGE_SIZE, all.size))
-        }
+    private val otts = listOf(
+        Ott("nf", "Netflix", "", "poster/v", "poster/v", "epimg"),
+        Ott("pv", "Prime Video", "pv/", "pv/v", "pv/h", "pvepimg"),
+        Ott("hs", "Hotstar", "hs/", "hs/v", "hs/h", "hsepimg")
+    )
 
-        val items = slice.map { id -> id.toCard() }
-        val hasNext = start + PAGE_SIZE < all.size
+    private fun ottOf(code: String): Ott = otts.firstOrNull { it.code == code } ?: otts[0]
 
-        return newHomePageResponse(
-            listOf(HomePageList(name, items, isHorizontalImages = false)),
-            hasNext
-        )
-    }
+    private fun cookies(ott: String) = mapOf(
+        "t_hash_t" to cookie_value,
+        "hd" to "on",
+        "ott" to ott
+    )
 
-    private fun String.toCard(): SearchResponse {
-        val id = this
-        return newAnimeSearchResponse("", Id(id).toJson()) {
-            this.posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
+    private fun posterUrl(o: Ott, id: String) = "https://imgcdn.kim/${o.poster}/$id.jpg"
+
+    private fun card(o: Ott, id: String, title: String = ""): SearchResponse =
+        newAnimeSearchResponse(title, Ref(id, o.code).toJson()) {
+            this.posterUrl = posterUrl(o, id)
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val rows = ArrayList<HomePageList>()
+        val genreBuckets = LinkedHashMap<String, MutableList<SearchResponse>>()
+
+        for (o in otts) {
+            val all = NetflixMirrorStorage.getAll(o.code).toMutableMap()
+            // Fold the manual seed list into Netflix as not-yet-categorized ids.
+            if (o.code == "nf") {
+                CustomCatalogIds.ids.forEach { id ->
+                    if (id.isNotBlank() && !all.containsKey(id)) all[id] = CatalogRecord()
+                }
+            }
+            if (all.isEmpty()) continue
+
+            val movies = ArrayList<SearchResponse>()
+            val series = ArrayList<SearchResponse>()
+            val more = ArrayList<SearchResponse>()
+
+            all.forEach { (id, rec) ->
+                val c = card(o, id)
+                when (rec.t) {
+                    "m" -> movies.add(c)
+                    "s" -> series.add(c)
+                    else -> more.add(c)
+                }
+                rec.g.forEach { genre ->
+                    genreBuckets.getOrPut(genre) { ArrayList() }.add(c)
+                }
+            }
+
+            if (movies.isNotEmpty()) rows.add(HomePageList("${o.label} Movies", movies.shuffled().take(ROW_LIMIT)))
+            if (series.isNotEmpty()) rows.add(HomePageList("${o.label} Series", series.shuffled().take(ROW_LIMIT)))
+            if (more.isNotEmpty()) rows.add(HomePageList("${o.label} • More", more.shuffled().take(ROW_LIMIT)))
+        }
+
+        // Genre rows, aggregated across all sources, biggest buckets first.
+        genreBuckets.entries
+            .filter { it.value.size >= MIN_GENRE_SIZE }
+            .sortedByDescending { it.value.size }
+            .take(MAX_GENRE_ROWS)
+            .forEach { (genre, items) ->
+                rows.add(HomePageList(genre, items.shuffled().take(ROW_LIMIT)))
+            }
+
+        return newHomePageResponse(rows, false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "hd" to "on",
-            "ott" to "nf"
-        )
-        val url = "$mainUrl/mobile/search.php?s=$query&t=${APIHolder.unixTime}"
-        val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
-
-        return data.searchResult.map {
-            newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
-                posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+        // Search every source and merge, tagging each result with its source.
+        return otts.amap { o ->
+            try {
+                app.get(
+                    "$mainUrl/mobile/${o.path}search.php?s=$query&t=${APIHolder.unixTime}",
+                    referer = "$mainUrl/home",
+                    cookies = cookies(o.code)
+                ).parsed<SearchData>().searchResult.map { r ->
+                    newAnimeSearchResponse("${r.t} (${o.label})", Ref(r.id, o.code).toJson()) {
+                        this.posterUrl = posterUrl(o, r.id)
+                        posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                    }
+                }
+            } catch (e: Exception) {
+                emptyList()
             }
-        }
+        }.flatten()
     }
 
     override suspend fun load(url: String): LoadResponse? {
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val id = parseJson<Id>(url).id
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "hd" to "on",
-            "ott" to "nf"
-        )
+        val ref = parseJson<Ref>(url)
+        val o = ottOf(ref.ott)
+        val id = ref.id
+
         val data = app.get(
-            "$mainUrl/mobile/post.php?id=$id&t=${APIHolder.unixTime}",
+            "$mainUrl/mobile/${o.path}post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
             referer = "$mainUrl/home",
-            cookies = cookies
+            cookies = cookies(o.code)
         ).parsed<PostData>()
 
         val episodes = arrayListOf<Episode>()
-
         val title = data.title
-        val castList = data.cast?.split(",")?.map { it.trim() } ?: emptyList()
-        val cast = castList.map {
-            ActorData(
-                Actor(it),
-            )
-        }
-        val genre = data.genre?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-
+        val cast = (data.cast?.split(",")?.map { it.trim() } ?: emptyList()).map { ActorData(Actor(it)) }
+        val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
         val rating = data.match?.replace("IMDb ", "")
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
 
-        val suggest = data.suggest?.map {
-            newAnimeSearchResponse("", Id(it.id).toJson()) {
-                this.posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
-            }
-        }
+        val suggest = data.suggest?.map { card(o, it.id) }
 
-        if (data.episodes.first() == null) {
-            episodes.add(newEpisode(LoadData(title, id)) {
-                name = data.title
-            })
+        val isMovie = data.episodes.first() == null
+        if (isMovie) {
+            episodes.add(newEpisode(LoadData(title, id, o.code)) { name = data.title })
         } else {
             data.episodes.filterNotNull().mapTo(episodes) {
-                newEpisode(LoadData(title, it.id)) {
+                newEpisode(LoadData(title, it.id, o.code)) {
                     this.name = it.t
                     this.episode = it.ep.replace("E", "").toIntOrNull()
                     this.season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/poster/v/150/${it.id}.jpg"
+                    this.posterUrl = "https://imgcdn.kim/${o.epDir}/${it.id}.jpg"
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
-
             if (data.nextPageShow == 1) {
-                episodes.addAll(getEpisodes(title, url, data.nextPageSeason!!, 2))
+                episodes.addAll(getEpisodes(o, title, id, data.nextPageSeason!!, 2))
             }
-
             data.season?.dropLast(1)?.amap {
-                episodes.addAll(getEpisodes(title, url, it.id, 1))
+                episodes.addAll(getEpisodes(o, title, id, it.id, 1))
             }
         }
 
-        val type = if (data.episodes.first() == null) TvType.Movie else TvType.TvSeries
+        // Keep this title's metadata fresh in the catalog too.
+        NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre ?: emptyList())
 
+        val type = if (isMovie) TvType.Movie else TvType.TvSeries
         return newTvSeriesLoadResponse(title, url, type, episodes) {
-            posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
-            backgroundPosterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
+            posterUrl = "https://imgcdn.kim/${o.poster}/$id.jpg"
+            backgroundPosterUrl = "https://imgcdn.kim/${o.backdrop}/$id.jpg"
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
             plot = data.desc
             year = data.year.toIntOrNull()
@@ -193,28 +225,23 @@ class CustomCatalogProvider : MainAPI() {
     }
 
     private suspend fun getEpisodes(
-        title: String, eid: String, sid: String, page: Int
+        o: Ott, title: String, eid: String, sid: String, page: Int
     ): List<Episode> {
         val episodes = arrayListOf<Episode>()
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "hd" to "on",
-            "ott" to "nf"
-        )
         var pg = page
         while (true) {
             val data = app.get(
-                "$mainUrl/mobile/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
+                "$mainUrl/mobile/${o.path}episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
                 headers,
                 referer = "$mainUrl/home",
-                cookies = cookies
+                cookies = cookies(o.code)
             ).parsed<EpisodesData>()
             data.episodes?.mapTo(episodes) {
-                newEpisode(LoadData(title, it.id)) {
+                newEpisode(LoadData(title, it.id, o.code)) {
                     name = it.t
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/epimg/150/${it.id}.jpg"
+                    this.posterUrl = "https://imgcdn.kim/${o.epDir}/${it.id}.jpg"
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -231,10 +258,10 @@ class CustomCatalogProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val apiBase = resolveApiUrl()
-        val id = parseJson<LoadData>(data).id
+        val ld = parseJson<LoadData>(data)
         val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders("nf", mapOf("Usertoken" to ""))
+            "$apiBase/newtv/player.php?id=${ld.id}",
+            headers = buildNewTvHeaders(ld.ott, mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
 
         if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
@@ -244,7 +271,6 @@ class CustomCatalogProvider : MainAPI() {
                 this.referer = response.referer ?: apiBase
             }
         )
-
         return true
     }
 
@@ -264,11 +290,14 @@ class CustomCatalogProvider : MainAPI() {
         }
     }
 
-    data class Id(
-        val id: String
+    data class Ref(
+        val id: String,
+        val ott: String
     )
 
     data class LoadData(
-        val title: String, val id: String
+        val title: String,
+        val id: String,
+        val ott: String
     )
 }

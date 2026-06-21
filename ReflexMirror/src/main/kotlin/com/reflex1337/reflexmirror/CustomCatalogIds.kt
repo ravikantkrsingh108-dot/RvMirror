@@ -13,12 +13,12 @@ package com.reflex1337.reflexmirror
  *      search on the mirror site and grab the id from the URL / data-post.
  *   2. Add the id as a new "..." entry in the list below.
  *
- * The catalog paginates automatically (PAGE_SIZE per page in
- * CustomCatalogProvider), so this list can be as long as you like and
- * every id will show up as a card.
+ * These ids are folded into the Netflix "More" row of the Custom Catalog as
+ * not-yet-categorized titles. Once a title is opened, its type (movie/series)
+ * and genres are detected and it moves into the proper grouped/genre rows.
  *
- * Both movies and series work here — the provider detects the type when
- * the title is opened, exactly like the Netflix provider does.
+ * Most of the catalog fills itself as users browse Netflix/Prime/Hotstar — this
+ * list is just an optional manual seed for Netflix ids.
  */
 object CustomCatalogIds {
     val ids: List<String> = listOf(

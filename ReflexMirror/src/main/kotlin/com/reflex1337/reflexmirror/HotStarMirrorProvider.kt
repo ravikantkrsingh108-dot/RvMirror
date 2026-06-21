@@ -66,6 +66,13 @@ class HotStarMirrorProvider : MainAPI() {
         val items = document.select(".tray-container, #top10").map {
             it.toHomePageList()
         }
+
+        // Passively record every id shown, so the Custom Catalog self-populates.
+        val seenIds = document.select("article, .top10-post").mapNotNull {
+            (it.selectFirst("a")?.attr("data-post")?.ifBlank { null }) ?: it.attr("data-post").ifBlank { null }
+        }
+        NetflixMirrorStorage.addBareIds("hs", seenIds)
+
         return newHomePageResponse(items, false)
     }
 
@@ -145,6 +152,14 @@ class HotStarMirrorProvider : MainAPI() {
                 posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
+
+        // Record this title (type + genres) and its suggestions for the Custom Catalog.
+        NetflixMirrorStorage.addRich(
+            "hs", id,
+            if (data.episodes.first() == null) "m" else "s",
+            genre ?: emptyList()
+        )
+        NetflixMirrorStorage.addBareIds("hs", data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         if (data.episodes.first() == null) {
             episodes.add(newEpisode(LoadData(title, id)) {

@@ -34,28 +34,71 @@ object NetflixMirrorStorage {
     }
 
     /**
-     * Passive catalog collection: every id a user sees while browsing is unioned
-     * into a persistent set, keyed by ott ("nf", "pv", ...). The Custom Catalog
-     * reads this back, so the catalog grows itself as the app is used.
+     * Passive catalog collection. Per ott ("nf", "pv", "hs") we keep a map of
+     * id -> {type, genres}. Bare ids (seen on home/suggestions) start as type "?"
+     * and get upgraded to "m"/"s" with genres the first time a title is opened.
+     * The Custom Catalog reads this to build grouped, genre-tagged rows.
      */
+    private val cache = HashMap<String, MutableMap<String, CatalogRecord>>()
+
     @Synchronized
-    fun addIds(ott: String, ids: Collection<String>) {
-        if (!::prefs.isInitialized) return
-        val cleaned = ids.mapNotNull { it.trim().ifBlank { null } }
-        if (cleaned.isEmpty()) return
-        val key = "ids_$ott"
-        // getStringSet returns a shared instance that must not be mutated — copy it.
-        val current = prefs.getStringSet(key, emptySet())?.toMutableSet() ?: mutableSetOf()
-        val sizeBefore = current.size
-        current.addAll(cleaned)
-        if (current.size != sizeBefore) {
-            prefs.edit().putStringSet(key, current).apply()
+    private fun loadOtt(ott: String): MutableMap<String, CatalogRecord> {
+        cache[ott]?.let { return it }
+        val json = if (::prefs.isInitialized) prefs.getString("catalog_$ott", null) else null
+        val map: MutableMap<String, CatalogRecord> = if (json.isNullOrBlank()) {
+            mutableMapOf()
+        } else {
+            try {
+                JSONParser.parse(json, CatalogStore::class).items.toMutableMap()
+            } catch (e: Exception) {
+                mutableMapOf()
+            }
         }
+        cache[ott] = map
+        return map
     }
 
     @Synchronized
-    fun getIds(ott: String): Set<String> {
-        if (!::prefs.isInitialized) return emptySet()
-        return prefs.getStringSet("ids_$ott", emptySet())?.toSet() ?: emptySet()
+    private fun persist(ott: String) {
+        if (!::prefs.isInitialized) return
+        val map = cache[ott] ?: return
+        prefs.edit().putString("catalog_$ott", JSONParser.writeValueAsString(CatalogStore(map))).apply()
     }
+
+    /** Record ids of unknown type (home cards, suggestions). Never downgrades a rich record. */
+    @Synchronized
+    fun addBareIds(ott: String, ids: Collection<String>) {
+        val map = loadOtt(ott)
+        var changed = false
+        for (raw in ids) {
+            val id = raw.trim()
+            if (id.isNotEmpty() && !map.containsKey(id)) {
+                map[id] = CatalogRecord()
+                changed = true
+            }
+        }
+        if (changed) persist(ott)
+    }
+
+    /** Upsert a title with known type ("m"/"s") and genres — called from load(). */
+    @Synchronized
+    fun addRich(ott: String, id: String, type: String, genres: List<String>) {
+        val clean = id.trim()
+        if (clean.isEmpty()) return
+        val map = loadOtt(ott)
+        map[clean] = CatalogRecord(type, genres)
+        persist(ott)
+    }
+
+    @Synchronized
+    fun getAll(ott: String): Map<String, CatalogRecord> = HashMap(loadOtt(ott))
 }
+
+data class CatalogRecord(
+    val t: String = "?",        // "m" movie, "s" series, "?" unknown
+    val g: List<String> = emptyList()
+)
+
+data class CatalogStore(
+    val items: MutableMap<String, CatalogRecord> = mutableMapOf()
+)
