@@ -1,0 +1,23 @@
+[
+    {
+        "iconUrl": "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/refs/heads/main/Logos/ReflexMirror-icon.png",
+        "fileHash": "sha256-b7d971d5a77ee99f3b29b8e1bab261b1fe750e445a109c2d1297ea65034706f2",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
+        "fileSize": 159310,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Reflex1337, NivinCNC"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 12,
+        "internalName": "ReflexMirror",
+        "description": "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages",
+        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/ReflexMirror.cs3",
+        "name": "ReflexMirror"
+    }
+]
