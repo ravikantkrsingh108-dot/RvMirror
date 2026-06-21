@@ -156,7 +156,8 @@ class NetflixMirrorProvider : MainAPI() {
         NetflixMirrorStorage.addRich(
             "nf", id,
             if (data.episodes.first() == null) "m" else "s",
-            genre ?: emptyList()
+            genre ?: emptyList(),
+            data.title
         )
         NetflixMirrorStorage.addBareIds("nf", data.suggest?.mapNotNull { it.id } ?: emptyList())
 

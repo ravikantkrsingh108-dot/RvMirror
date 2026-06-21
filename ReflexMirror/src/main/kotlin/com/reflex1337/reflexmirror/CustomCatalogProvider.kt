@@ -11,25 +11,26 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import okhttp3.Interceptor
 import okhttp3.Response
 import com.lagradost.cloudstream3.APIHolder.unixTime
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
- * A single catalog that aggregates Netflix / Prime Video / Hotstar content into
- * grouped, genre-tagged rows. It is driven by ids collected passively while the
- * user browses those providers (see NetflixMirrorStorage), so it grows itself.
+ * "All NetMirror" — a single catalog that aggregates Netflix / Prime Video /
+ * Hotstar content into grouped, genre-tagged rows. It is driven by ids collected
+ * passively while browsing those providers (see NetflixMirrorStorage).
  *
- * Rows produced (only non-empty ones show):
- *   - "<Source> Movies", "<Source> Series" — titles whose type is known
- *   - "<Source> • More"                    — collected but not-yet-opened ids
- *   - genre rows ("Horror", "Drama", ...)  — aggregated across all sources
- *
- * Each card carries its source (ott) so playback is routed to the right backend.
+ * Ids start "bare" (type/genres unknown). A background enrichment pass fetches
+ * each one's type + genres + title so it lands in the right Movies/Series and
+ * genre rows. No display caps — every collected title is shown.
  */
 class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
-        private const val ROW_LIMIT = 60      // max cards rendered per row
-        private const val MAX_GENRE_ROWS = 15
-        private const val MIN_GENRE_SIZE = 3
+        private const val MIN_GENRE_SIZE = 1     // show a genre row even for a single title
+        private const val ENRICH_CONCURRENCY = 10 // parallel post.php fetches per round
+        private const val PERSIST_EVERY = 100     // flush to storage after this many enriched
     }
 
     override val supportedTypes = setOf(
@@ -44,6 +45,9 @@ class CustomCatalogProvider : MainAPI() {
     override val hasMainPage = true
 
     private var cookie_value = ""
+    private val enrichScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @Volatile private var enriching = false
+
     private val headers = mapOf(
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
@@ -61,8 +65,6 @@ class CustomCatalogProvider : MainAPI() {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    // Per-source routing config. path = url segment after /mobile/; poster/backdrop
-    // are imgcdn.kim directories; epDir is the episode-thumbnail directory.
     private data class Ott(
         val code: String,
         val label: String,
@@ -95,12 +97,14 @@ class CustomCatalogProvider : MainAPI() {
         }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // Kick off background categorization of any not-yet-known ids.
+        kickEnrichment()
+
         val rows = ArrayList<HomePageList>()
         val genreBuckets = LinkedHashMap<String, MutableList<SearchResponse>>()
 
         for (o in otts) {
             val all = NetflixMirrorStorage.getAll(o.code).toMutableMap()
-            // Fold the manual seed list into Netflix as not-yet-categorized ids.
             if (o.code == "nf") {
                 CustomCatalogIds.ids.forEach { id ->
                     if (id.isNotBlank() && !all.containsKey(id)) all[id] = CatalogRecord()
@@ -113,7 +117,7 @@ class CustomCatalogProvider : MainAPI() {
             val more = ArrayList<SearchResponse>()
 
             all.forEach { (id, rec) ->
-                val c = card(o, id)
+                val c = card(o, id, rec.n)
                 when (rec.t) {
                     "m" -> movies.add(c)
                     "s" -> series.add(c)
@@ -124,18 +128,17 @@ class CustomCatalogProvider : MainAPI() {
                 }
             }
 
-            if (movies.isNotEmpty()) rows.add(HomePageList("${o.label} Movies", movies.shuffled().take(ROW_LIMIT)))
-            if (series.isNotEmpty()) rows.add(HomePageList("${o.label} Series", series.shuffled().take(ROW_LIMIT)))
-            if (more.isNotEmpty()) rows.add(HomePageList("${o.label} • More", more.shuffled().take(ROW_LIMIT)))
+            if (movies.isNotEmpty()) rows.add(HomePageList("${o.label} Movies", movies.shuffled()))
+            if (series.isNotEmpty()) rows.add(HomePageList("${o.label} Series", series.shuffled()))
+            if (more.isNotEmpty()) rows.add(HomePageList("${o.label} • More", more.shuffled()))
         }
 
-        // Genre rows, aggregated across all sources, biggest buckets first.
+        // Genre rows, aggregated across all sources, biggest buckets first — no cap.
         genreBuckets.entries
             .filter { it.value.size >= MIN_GENRE_SIZE }
             .sortedByDescending { it.value.size }
-            .take(MAX_GENRE_ROWS)
             .forEach { (genre, items) ->
-                rows.add(HomePageList(genre, items.shuffled().take(ROW_LIMIT)))
+                rows.add(HomePageList(genre, items.shuffled()))
             }
 
         return newHomePageResponse(rows, false)
@@ -143,16 +146,24 @@ class CustomCatalogProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        // Search every source and merge, tagging each result with its source.
-        return otts.amap { o ->
+        val q = query.trim()
+
+        // 1) Local saved content — no 50 cap, matches everything we've categorized.
+        val local = otts.flatMap { o ->
+            NetflixMirrorStorage.getAll(o.code).entries
+                .filter { it.value.n.isNotEmpty() && it.value.n.contains(q, ignoreCase = true) }
+                .map { (id, rec) -> card(o, id, rec.n) }
+        }
+
+        // 2) Live server search across every source (and feed the catalog).
+        val live = otts.amap { o ->
             try {
                 val results = app.get(
-                    "$mainUrl/mobile/${o.path}search.php?s=$query&t=${APIHolder.unixTime}",
+                    "$mainUrl/mobile/${o.path}search.php?s=$q&t=${APIHolder.unixTime}",
                     referer = "$mainUrl/home",
                     cookies = cookies(o.code)
                 ).parsed<SearchData>().searchResult
 
-                // Feed the catalog with everything search surfaces.
                 NetflixMirrorStorage.addBareIds(o.code, results.map { it.id })
 
                 results.map { r ->
@@ -165,6 +176,14 @@ class CustomCatalogProvider : MainAPI() {
                 emptyList()
             }
         }.flatten()
+
+        // Merge, de-duplicating by payload (id + source); local first.
+        val seen = HashSet<String>()
+        val out = ArrayList<SearchResponse>()
+        for (sr in local + live) {
+            if (seen.add(sr.url)) out.add(sr)
+        }
+        return out
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -210,8 +229,8 @@ class CustomCatalogProvider : MainAPI() {
             }
         }
 
-        // Feed the catalog: record this title (type + genres) and its suggestions.
-        NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre ?: emptyList())
+        // Feed the catalog: record this title (type + genres + name) and its suggestions.
+        NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre ?: emptyList(), title)
         NetflixMirrorStorage.addBareIds(o.code, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         val language = normalizeLang(data.language) ?: normalizeLang(data.lang)
@@ -233,12 +252,6 @@ class CustomCatalogProvider : MainAPI() {
         }
     }
 
-    /**
-     * Builds a tidy, scannable info block shown above the synopsis on the detail
-     * page: a facts line (source • IMDb • language • runtime • maturity), then a
-     * genres line, then director, then the synopsis. Some of these also appear as
-     * native chips, but the consolidated header reads cleaner at a glance.
-     */
     /** The source may send language as a String or an array of strings — normalize both. */
     private fun normalizeLang(value: Any?): String? = when (value) {
         is String -> value.trim().ifBlank { null }
@@ -249,6 +262,10 @@ class CustomCatalogProvider : MainAPI() {
         else -> null
     }
 
+    /**
+     * Formatted info header above the synopsis: facts line (source, IMDb,
+     * language, runtime, maturity), genres, director, then the synopsis.
+     */
     private fun buildInfoPlot(
         o: Ott,
         data: PostData,
@@ -273,6 +290,56 @@ class CustomCatalogProvider : MainAPI() {
                 append(it)
             }
         }.trim().ifBlank { data.desc }
+    }
+
+    /**
+     * Background pass that categorizes every still-unknown id (type + genres +
+     * title) so it moves out of "• More" into the right grouped/genre rows.
+     * Runs once at a time, resumes across sessions (progress is persisted).
+     */
+    private fun kickEnrichment() {
+        if (enriching) return
+        enriching = true
+        enrichScope.launch {
+            try {
+                if (cookie_value.isEmpty()) cookie_value = bypass(mainUrl)
+                for (o in otts) {
+                    val bare = NetflixMirrorStorage.getAll(o.code)
+                        .filterValues { it.t == "?" }
+                        .keys.toList()
+                    if (bare.isEmpty()) continue
+
+                    val buffer = HashMap<String, CatalogRecord>()
+                    for (chunk in bare.chunked(ENRICH_CONCURRENCY)) {
+                        chunk.amap { id -> id to fetchRecord(o, id) }
+                            .forEach { (id, rec) -> if (rec != null) buffer[id] = rec }
+                        if (buffer.size >= PERSIST_EVERY) {
+                            NetflixMirrorStorage.addRichBatch(o.code, HashMap(buffer))
+                            buffer.clear()
+                        }
+                    }
+                    if (buffer.isNotEmpty()) NetflixMirrorStorage.addRichBatch(o.code, buffer)
+                }
+            } catch (_: Exception) {
+                // best-effort; will resume on the next home open
+            } finally {
+                enriching = false
+            }
+        }
+    }
+
+    private suspend fun fetchRecord(o: Ott, id: String): CatalogRecord? = try {
+        val data = app.get(
+            "$mainUrl/mobile/${o.path}post.php?id=$id&t=${APIHolder.unixTime}",
+            headers,
+            referer = "$mainUrl/home",
+            cookies = cookies(o.code)
+        ).parsed<PostData>()
+        val type = if (data.episodes.first() == null) "m" else "s"
+        val genres = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        CatalogRecord(type, genres, data.title.trim())
+    } catch (e: Exception) {
+        null
     }
 
     private suspend fun getEpisodes(

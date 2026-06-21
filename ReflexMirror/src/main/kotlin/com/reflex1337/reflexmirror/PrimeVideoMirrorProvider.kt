@@ -157,7 +157,8 @@ class PrimeVideoMirrorProvider : MainAPI() {
         NetflixMirrorStorage.addRich(
             "pv", id,
             if (data.episodes.first() == null) "m" else "s",
-            genre ?: emptyList()
+            genre ?: emptyList(),
+            data.title
         )
         NetflixMirrorStorage.addBareIds("pv", data.suggest?.mapNotNull { it.id } ?: emptyList())
 

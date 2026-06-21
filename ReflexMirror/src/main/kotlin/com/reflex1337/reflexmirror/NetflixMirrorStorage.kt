@@ -80,13 +80,22 @@ object NetflixMirrorStorage {
         if (changed) persist(ott)
     }
 
-    /** Upsert a title with known type ("m"/"s") and genres — called from load(). */
+    /** Upsert a title with known type ("m"/"s"), genres and name — called from load()/enrichment. */
     @Synchronized
-    fun addRich(ott: String, id: String, type: String, genres: List<String>) {
+    fun addRich(ott: String, id: String, type: String, genres: List<String>, title: String = "") {
         val clean = id.trim()
         if (clean.isEmpty()) return
         val map = loadOtt(ott)
-        map[clean] = CatalogRecord(type, genres)
+        map[clean] = CatalogRecord(type, genres, title.trim())
+        persist(ott)
+    }
+
+    /** Upsert many records at once, persisting only once (used by background enrichment). */
+    @Synchronized
+    fun addRichBatch(ott: String, records: Map<String, CatalogRecord>) {
+        if (records.isEmpty()) return
+        val map = loadOtt(ott)
+        map.putAll(records)
         persist(ott)
     }
 
@@ -96,7 +105,8 @@ object NetflixMirrorStorage {
 
 data class CatalogRecord(
     val t: String = "?",        // "m" movie, "s" series, "?" unknown
-    val g: List<String> = emptyList()
+    val g: List<String> = emptyList(),
+    val n: String = ""          // title/name, empty until known
 )
 
 data class CatalogStore(

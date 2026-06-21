@@ -157,7 +157,8 @@ class HotStarMirrorProvider : MainAPI() {
         NetflixMirrorStorage.addRich(
             "hs", id,
             if (data.episodes.first() == null) "m" else "s",
-            genre ?: emptyList()
+            genre ?: emptyList(),
+            data.title
         )
         NetflixMirrorStorage.addBareIds("hs", data.suggest?.mapNotNull { it.id } ?: emptyList())
 
