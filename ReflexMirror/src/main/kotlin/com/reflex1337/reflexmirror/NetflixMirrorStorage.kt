@@ -32,4 +32,30 @@ object NetflixMirrorStorage {
         editor.remove("nf_cookie_timestamp")
         editor.apply()
     }
+
+    /**
+     * Passive catalog collection: every id a user sees while browsing is unioned
+     * into a persistent set, keyed by ott ("nf", "pv", ...). The Custom Catalog
+     * reads this back, so the catalog grows itself as the app is used.
+     */
+    @Synchronized
+    fun addIds(ott: String, ids: Collection<String>) {
+        if (!::prefs.isInitialized) return
+        val cleaned = ids.mapNotNull { it.trim().ifBlank { null } }
+        if (cleaned.isEmpty()) return
+        val key = "ids_$ott"
+        // getStringSet returns a shared instance that must not be mutated — copy it.
+        val current = prefs.getStringSet(key, emptySet())?.toMutableSet() ?: mutableSetOf()
+        val sizeBefore = current.size
+        current.addAll(cleaned)
+        if (current.size != sizeBefore) {
+            prefs.edit().putStringSet(key, current).apply()
+        }
+    }
+
+    @Synchronized
+    fun getIds(ott: String): Set<String> {
+        if (!::prefs.isInitialized) return emptySet()
+        return prefs.getStringSet("ids_$ott", emptySet())?.toSet() ?: emptySet()
+    }
 }

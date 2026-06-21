@@ -12,11 +12,15 @@ open class reflexmirrorPlugin: Plugin() {
         NetflixMirrorProvider.context = context
         PrimeVideoMirrorProvider.context = context
         HotStarMirrorProvider.context = context
-        
+        CustomCatalogProvider.context = context
+
         // Register core standard providers
         registerMainAPI(NetflixMirrorProvider())
         registerMainAPI(PrimeVideoMirrorProvider())
         registerMainAPI(HotStarMirrorProvider())
+
+        // Custom, id-driven catalog (edit CustomCatalogIds to add cards)
+        registerMainAPI(CustomCatalogProvider())
         
         // Force-enable all 4 specialized sub-studios directly on startup
         registerMainAPI(DisneyStudioProvider("disney", "Disney"))

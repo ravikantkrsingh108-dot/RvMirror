@@ -8,17 +8,23 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.Response
-import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
-class NetflixMirrorProvider : MainAPI() {
+/**
+ * A catalog whose home page is driven entirely by [CustomCatalogIds].
+ *
+ * Unlike the Netflix provider (which shows only the server-curated trays),
+ * this lists every id you put in [CustomCatalogIds.ids] as a card, paginated
+ * automatically. Playback / details reuse the Netflix backend (ott = "nf").
+ */
+class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
+        private const val PAGE_SIZE = 20
     }
-    
+
     override val supportedTypes = setOf(
         TvType.Movie,
         TvType.TvSeries,
@@ -28,10 +34,14 @@ class NetflixMirrorProvider : MainAPI() {
     override var lang = "en"
 
     override var mainUrl = "https://net52.cc"
-    override var name = "Netflix"
+    override var name = "Custom Catalog"
 
     override val hasMainPage = true
     private var cookie_value = ""
+
+    // Randomized display order, rebuilt whenever the user reopens the catalog
+    // (page 1) and kept stable while scrolling so pages never repeat/skip.
+    private var shuffledIds: List<String> = emptyList()
     private val headers = mapOf(
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
@@ -49,46 +59,36 @@ class NetflixMirrorProvider : MainAPI() {
         "X-Requested-With" to "XMLHttpRequest"
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-       
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "ott" to "nf",
-            "hd" to "on"
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // On a fresh open (page 1), rebuild from manual ids + ids collected while
+        // browsing Netflix, then shuffle so the grid feels different every time.
+        if (page <= 1 || shuffledIds.isEmpty()) {
+            val merged = LinkedHashSet<String>().apply {
+                addAll(CustomCatalogIds.ids)
+                addAll(NetflixMirrorStorage.getIds("nf"))
+            }
+            shuffledIds = merged.toList().shuffled()
+        }
+
+        val all = shuffledIds
+        val start = (page - 1) * PAGE_SIZE
+        val slice = if (start >= all.size) {
+            emptyList()
+        } else {
+            all.subList(start, minOf(start + PAGE_SIZE, all.size))
+        }
+
+        val items = slice.map { id -> id.toCard() }
+        val hasNext = start + PAGE_SIZE < all.size
+
+        return newHomePageResponse(
+            listOf(HomePageList(name, items, isHorizontalImages = false)),
+            hasNext
         )
-        val document = app.get(
-            "$mainUrl/mobile/home?app=1",
-            cookies = cookies,
-            headers = headers,
-            referer = "$mainUrl/mobile/home?app=1",
-        ).document
-        val items = document.select(".tray-container, #top10").map {
-            it.toHomePageList()
-        }
-
-        // Passively record every id shown, so the Custom Catalog self-populates.
-        val seenIds = document.select("article, .top10-post").mapNotNull {
-            (it.selectFirst("a")?.attr("data-post")?.ifBlank { null }) ?: it.attr("data-post").ifBlank { null }
-        }
-        NetflixMirrorStorage.addIds("nf", seenIds)
-
-        return newHomePageResponse(items, false)
     }
 
-    private fun Element.toHomePageList(): HomePageList {
-        val name = select("h2, span").text()
-        val items = select("article, .top10-post").mapNotNull {
-            it.toSearchResult()
-        }
-        return HomePageList(name, items, isHorizontalImages = false)
-    }
-
-    private fun Element.toSearchResult(): SearchResponse? {
-        val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
-        // val posterUrl =
-        //     fixUrlNull(selectFirst(".card-img-container img, .top10-img img")?.attr("data-src"))
-
+    private fun String.toCard(): SearchResponse {
+        val id = this
         return newAnimeSearchResponse("", Id(id).toJson()) {
             this.posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
@@ -96,8 +96,7 @@ class NetflixMirrorProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
             "hd" to "on",
@@ -115,7 +114,7 @@ class NetflixMirrorProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val id = parseJson<Id>(url).id
         val cookies = mapOf(
             "t_hash_t" to cookie_value,
@@ -152,9 +151,6 @@ class NetflixMirrorProvider : MainAPI() {
             }
         }
 
-        // Record this title + its suggestions to grow the Custom Catalog.
-        NetflixMirrorStorage.addIds("nf", listOf(id) + (data.suggest?.mapNotNull { it.id } ?: emptyList()))
-
         if (data.episodes.first() == null) {
             episodes.add(newEpisode(LoadData(title, id)) {
                 name = data.title
@@ -189,7 +185,7 @@ class NetflixMirrorProvider : MainAPI() {
             year = data.year.toIntOrNull()
             tags = genre
             actors = cast
-            this.score =  Score.from10(rating)
+            this.score = Score.from10(rating)
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
