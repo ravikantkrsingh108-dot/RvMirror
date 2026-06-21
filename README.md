@@ -1,10 +1,23 @@
-**Shortcode**: `reflex1337`
+# RvMirror
 
-**Numbered Shortcode**: `0401`
+**Shortcode**: `RV108`
 
-The Reflex Repository is an English Repository with the focus of providing English speaking plugins through this Repository. You can also make pull requests to contribute to the Repository, as well create issues with site suggestions.
+**Numbered Shortcode**: `0108`
 
-Keep in mind this is a hobby and will be updated when the maintainers and contributors have time. Thanks for understanding.
+> The shortcodes above only work after you create them on Cuttly (see below) pointing at this repo's `repo.json`.
+
+## Add in CloudStream
+
+In CloudStream: **Settings → Extensions → Add repository**, then enter either:
+
+- Shortcode: `RV108` (once registered on Cuttly), or
+- Direct URL (no VPN needed — served via jsDelivr):
+
+  ```
+  https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@main/repo.json
+  ```
+
+Open the repo entry and install **ReflexMirror** to get the Netflix / Prime Video / Hotstar / Disney providers plus the self-populating **Custom Catalog**.
 
 
 ## 📄 License
@@ -29,4 +42,4 @@ If you believe content is violating copyright laws, please contact the **actual 
 
 ---
 
-**Thank You for using the Reflex Repo!**
+**Thank You for using RvMirror!**
