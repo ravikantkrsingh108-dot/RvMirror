@@ -57,6 +57,13 @@ jobs:
           cp **/build/*.cs3 $GITHUB_WORKSPACE/builds/ || echo "No .cs3 files found"
           cp build/plugins.json $GITHUB_WORKSPACE/builds/ || echo "No plugins.json found"
 
+          # Rewrite download URLs to jsDelivr CDN (raw.githubusercontent.com is
+          # often blocked/throttled by some ISPs, e.g. in India). jsDelivr serves
+          # the same files from a non-blocked host, so no VPN is needed.
+          sed -i \
+            "s#https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/builds/#https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@builds/#g" \
+            $GITHUB_WORKSPACE/builds/plugins.json || echo "plugins.json URL rewrite skipped"
+
       - name: Push builds
         run: |
           cd $GITHUB_WORKSPACE/builds
