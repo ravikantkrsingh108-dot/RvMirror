@@ -40,7 +40,7 @@ class CustomCatalogProvider : MainAPI() {
     )
     override var lang = "en"
     override var mainUrl = "https://net52.cc"
-    override var name = "Custom Catalog"
+    override var name = "All NetMirror"
     override val hasMainPage = true
 
     private var cookie_value = ""
@@ -208,12 +208,15 @@ class CustomCatalogProvider : MainAPI() {
         // Keep this title's metadata fresh in the catalog too.
         NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre ?: emptyList())
 
+        val language = (data.language ?: data.lang)?.trim()?.takeIf { it.isNotEmpty() }
+        val richPlot = buildInfoPlot(o, data, genre, rating, runTime, language)
+
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = "https://imgcdn.kim/${o.poster}/$id.jpg"
             backgroundPosterUrl = "https://imgcdn.kim/${o.backdrop}/$id.jpg"
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
-            plot = data.desc
+            plot = richPlot
             year = data.year.toIntOrNull()
             tags = genre
             actors = cast
@@ -222,6 +225,38 @@ class CustomCatalogProvider : MainAPI() {
             this.contentRating = data.ua
             this.recommendations = suggest
         }
+    }
+
+    /**
+     * Builds a tidy, scannable info block shown above the synopsis on the detail
+     * page: a facts line (source • IMDb • language • runtime • maturity), then a
+     * genres line, then director, then the synopsis. Some of these also appear as
+     * native chips, but the consolidated header reads cleaner at a glance.
+     */
+    private fun buildInfoPlot(
+        o: Ott,
+        data: PostData,
+        genre: List<String>?,
+        rating: String?,
+        runTime: Int,
+        language: String?
+    ): String? {
+        val facts = mutableListOf<String>()
+        facts.add("📺 ${o.label}")
+        rating?.takeIf { it.isNotBlank() }?.let { facts.add("⭐ IMDb $it") }
+        language?.let { facts.add("🌐 $it") }
+        if (runTime > 0) facts.add("⏱ ${runTime} min")
+        data.ua?.takeIf { it.isNotBlank() }?.let { facts.add("🔞 $it") }
+
+        return buildString {
+            appendLine(facts.joinToString("   •   "))
+            if (!genre.isNullOrEmpty()) appendLine("🎭 ${genre.joinToString(", ")}")
+            data.director?.trim()?.takeIf { it.isNotEmpty() }?.let { appendLine("🎬 Director: $it") }
+            data.desc?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                appendLine()
+                append(it)
+            }
+        }.trim().ifBlank { data.desc }
     }
 
     private suspend fun getEpisodes(

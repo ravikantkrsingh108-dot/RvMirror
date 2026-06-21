@@ -16,4 +16,7 @@ data class PostData(
     val match: String?,
     val runtime: String?,
     var suggest: List<Suggest>?,
+    // Best-effort: shown on the info page if the source returns either key.
+    val lang: String? = null,
+    val language: String? = null,
 )
