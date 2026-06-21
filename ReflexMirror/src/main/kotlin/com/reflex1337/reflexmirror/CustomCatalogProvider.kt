@@ -146,11 +146,16 @@ class CustomCatalogProvider : MainAPI() {
         // Search every source and merge, tagging each result with its source.
         return otts.amap { o ->
             try {
-                app.get(
+                val results = app.get(
                     "$mainUrl/mobile/${o.path}search.php?s=$query&t=${APIHolder.unixTime}",
                     referer = "$mainUrl/home",
                     cookies = cookies(o.code)
-                ).parsed<SearchData>().searchResult.map { r ->
+                ).parsed<SearchData>().searchResult
+
+                // Feed the catalog with everything search surfaces.
+                NetflixMirrorStorage.addBareIds(o.code, results.map { it.id })
+
+                results.map { r ->
                     newAnimeSearchResponse("${r.t} (${o.label})", Ref(r.id, o.code).toJson()) {
                         this.posterUrl = posterUrl(o, r.id)
                         posterHeaders = mapOf("Referer" to "$mainUrl/home")
@@ -205,8 +210,9 @@ class CustomCatalogProvider : MainAPI() {
             }
         }
 
-        // Keep this title's metadata fresh in the catalog too.
+        // Feed the catalog: record this title (type + genres) and its suggestions.
         NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre ?: emptyList())
+        NetflixMirrorStorage.addBareIds(o.code, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         val language = (data.language ?: data.lang)?.trim()?.takeIf { it.isNotEmpty() }
         val richPlot = buildInfoPlot(o, data, genre, rating, runTime, language)
