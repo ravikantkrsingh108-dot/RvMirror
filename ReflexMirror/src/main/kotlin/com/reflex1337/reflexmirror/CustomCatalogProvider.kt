@@ -233,8 +233,8 @@ class CustomCatalogProvider : MainAPI() {
         NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre ?: emptyList(), title)
         NetflixMirrorStorage.addBareIds(o.code, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
-        val language = normalizeLang(data.language) ?: normalizeLang(data.lang)
-        val richPlot = buildInfoPlot(o, data, genre, rating, runTime, language)
+        val languages = formatLanguages(data.language, data.lang)
+        val richPlot = buildInfoPlot(o, data, genre, rating, runTime, languages)
 
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
         return newTvSeriesLoadResponse(title, url, type, episodes) {
@@ -252,19 +252,54 @@ class CustomCatalogProvider : MainAPI() {
         }
     }
 
-    /** The source may send language as a String or an array of strings — normalize both. */
-    private fun normalizeLang(value: Any?): String? = when (value) {
-        is String -> value.trim().ifBlank { null }
+    /** Split a String/array language value into individual, trimmed names. */
+    private fun languageList(value: Any?): List<String> = when (value) {
+        is String -> value.split(",", "/", "|", "&").map { it.trim() }.filter { it.isNotEmpty() }
         is Collection<*> -> value.mapNotNull { it?.toString()?.trim()?.ifBlank { null } }
+        else -> emptyList()
+    }
+
+    /** Best-effort flag for a (spoken) language. Falls back to a globe. */
+    private fun flagFor(language: String): String = when (language.lowercase().trim()) {
+        "hindi", "tamil", "telugu", "malayalam", "kannada", "bengali", "marathi",
+        "punjabi", "gujarati", "bhojpuri", "urdu", "odia", "assamese" -> "🇮🇳" // 🇮🇳
+        "english" -> "🇬🇧"        // 🇬🇧
+        "korean" -> "🇰🇷"         // 🇰🇷
+        "japanese" -> "🇯🇵"       // 🇯🇵
+        "chinese", "mandarin", "cantonese" -> "🇨🇳" // 🇨🇳
+        "spanish", "español" -> "🇪🇸"  // 🇪🇸
+        "french" -> "🇫🇷"         // 🇫🇷
+        "german" -> "🇩🇪"         // 🇩🇪
+        "italian" -> "🇮🇹"        // 🇮🇹
+        "portuguese" -> "🇵🇹"     // 🇵🇹
+        "russian" -> "🇷🇺"        // 🇷🇺
+        "arabic" -> "🇸🇦"         // 🇸🇦
+        "thai" -> "🇹🇭"           // 🇹🇭
+        "turkish" -> "🇹🇷"        // 🇹🇷
+        "indonesian" -> "🇮🇩"     // 🇮🇩
+        "filipino", "tagalog" -> "🇵🇭" // 🇵🇭
+        "vietnamese" -> "🇻🇳"     // 🇻🇳
+        else -> "🌐"                          // 🌐
+    }
+
+    /** Combine source language fields into a "🇮🇳 Hindi  🇺🇸 English" style string. */
+    private fun formatLanguages(vararg values: Any?): String? {
+        val langs = values.flatMap { languageList(it) }
+            .map { it.replaceFirstChar { c -> c.uppercase() } }
             .distinct()
-            .joinToString(", ")
-            .ifBlank { null }
-        else -> null
+        if (langs.isEmpty()) return null
+        return langs.joinToString("   ") { "${flagFor(it)} $it" }
     }
 
     /**
-     * Formatted info header above the synopsis: facts line (source, IMDb,
-     * language, runtime, maturity), genres, director, then the synopsis.
+     * A clean, scannable detail-page header rendered above the synopsis:
+     *
+     *   📺 Netflix  ·  ⭐ 8.1  ·  🗓 2023  ·  ⏱ 124m  ·  🔞 16+
+     *   🌐 🇮🇳 Hindi  🇬🇧 English
+     *   🎭 Action · Thriller
+     *   🎬 Christopher Nolan
+     *   ──────────
+     *   <synopsis>
      */
     private fun buildInfoPlot(
         o: Ott,
@@ -272,21 +307,21 @@ class CustomCatalogProvider : MainAPI() {
         genre: List<String>?,
         rating: String?,
         runTime: Int,
-        language: String?
+        languages: String?
     ): String? {
-        val facts = mutableListOf<String>()
-        facts.add("📺 ${o.label}")
-        rating?.takeIf { it.isNotBlank() }?.let { facts.add("⭐ IMDb $it") }
-        language?.let { facts.add("🌐 $it") }
-        if (runTime > 0) facts.add("⏱ ${runTime} min")
+        val facts = mutableListOf("📺 ${o.label}")
+        rating?.takeIf { it.isNotBlank() }?.let { facts.add("⭐ $it") }
+        data.year.takeIf { it.isNotBlank() }?.let { facts.add("🗓 $it") }
+        if (runTime > 0) facts.add("⏱ ${runTime}m")
         data.ua?.takeIf { it.isNotBlank() }?.let { facts.add("🔞 $it") }
 
         return buildString {
-            appendLine(facts.joinToString("   •   "))
-            if (!genre.isNullOrEmpty()) appendLine("🎭 ${genre.joinToString(", ")}")
-            data.director?.trim()?.takeIf { it.isNotEmpty() }?.let { appendLine("🎬 Director: $it") }
+            appendLine(facts.joinToString("   ·   "))
+            languages?.let { appendLine("🌐 $it") }
+            if (!genre.isNullOrEmpty()) appendLine("🎭 ${genre.joinToString(" · ")}")
+            data.director?.trim()?.takeIf { it.isNotEmpty() }?.let { appendLine("🎬 $it") }
             data.desc?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                appendLine()
+                appendLine("──────────")
                 append(it)
             }
         }.trim().ifBlank { data.desc }
