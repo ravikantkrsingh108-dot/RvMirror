@@ -1,0 +1,135 @@
+[
+    {
+        "iconUrl": "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/refs/heads/master/Bollyflix/icon.png",
+        "fileHash": "sha256-9bc302f1c25ce4e51599404dc291cdc6fba38185c4715872a36339eef6624a63",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
+        "fileSize": 40206,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "megix"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "AsianDrama",
+            "Anime"
+        ],
+        "version": 32,
+        "internalName": "Bollyflix",
+        "description": "Movies and Series upto 4K",
+        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/Bollyflix.cs3",
+        "name": "Bollyflix"
+    },
+    {
+        "iconUrl": "https://hdghartv.cc/favicon.png",
+        "fileHash": "sha256-db04b3e4045eb26d733b0bd31dbf2fd7cab40e4931a5b1182f004957edaad5ad",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
+        "fileSize": 71714,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "laddu100"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 4,
+        "internalName": "HDGharTV",
+        "description": "Watch Movies and Series on HDGharTV",
+        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/HDGharTV.cs3",
+        "name": "HDGharTV"
+    },
+    {
+        "iconUrl": "https://github.com/SaurabhKaperwan/CSX/raw/refs/heads/master/MoviesDrive/icon.png",
+        "fileHash": "sha256-063f5b69c9e3280dc560fd55e47a84fb6e5e9c4e6be9b1386198deb1c830ff0d",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
+        "fileSize": 47808,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "megix"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "AsianDrama",
+            "Anime"
+        ],
+        "version": 31,
+        "internalName": "MoviesDrive",
+        "description": "High Quality Movies and TV Shows",
+        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/MoviesDrive.cs3",
+        "name": "MoviesDrive"
+    },
+    {
+        "iconUrl": "https://github.com/SaurabhKaperwan/CSX/raw/refs/heads/master/Moviesmod/icon.png",
+        "fileHash": "sha256-fc3b4475ca2afbc431f319667a638cc7f9fe1d867a9956318a7e553054008df0",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
+        "fileSize": 43534,
+        "status": 1,
+        "authors": [
+            "megix"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "AsianDrama",
+            "Anime"
+        ],
+        "version": 30,
+        "internalName": "Moviesmod",
+        "description": "Includes Topmovies",
+        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/Moviesmod.cs3",
+        "name": "Moviesmod"
+    },
+    {
+        "iconUrl": "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/refs/heads/main/Logos/ReflexMirror-icon.png",
+        "fileHash": "sha256-25d7716c2302dd4ce2449ca073d8b16c60fee65fa5f26b1e86966bb12201e50c",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
+        "fileSize": 146545,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Reflex1337, NivinCNC"
+        ],
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "version": 12,
+        "internalName": "ReflexMirror",
+        "description": "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages",
+        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/ReflexMirror.cs3",
+        "name": "ReflexMirror"
+    },
+    {
+        "iconUrl": "https://github.com/SaurabhKaperwan/CSX/raw/refs/heads/master/VegaMovies/icon.jpg",
+        "fileHash": "sha256-841272a4fb98fb20704fb67708f12754c5536e953727d15e1d753425c61d5d90",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
+        "fileSize": 53373,
+        "status": 1,
+        "language": "hi",
+        "authors": [
+            "megix"
+        ],
+        "tvTypes": [
+            "TvSeries",
+            "Movie",
+            "AsianDrama",
+            "Anime"
+        ],
+        "version": 81,
+        "internalName": "VegaMovies",
+        "description": "Includes LuxMovies, Rogmovies",
+        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/VegaMovies.cs3",
+        "name": "VegaMovies"
+    }
+]
