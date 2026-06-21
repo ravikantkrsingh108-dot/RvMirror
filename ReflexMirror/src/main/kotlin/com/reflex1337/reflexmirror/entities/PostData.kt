@@ -17,6 +17,7 @@ data class PostData(
     val runtime: String?,
     var suggest: List<Suggest>?,
     // Best-effort: shown on the info page if the source returns either key.
-    val lang: String? = null,
-    val language: String? = null,
+    // Typed as Any? because the source may return a String or an array of strings.
+    val lang: Any? = null,
+    val language: Any? = null,
 )

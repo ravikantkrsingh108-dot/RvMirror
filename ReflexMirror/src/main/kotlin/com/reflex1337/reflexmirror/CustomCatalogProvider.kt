@@ -214,7 +214,7 @@ class CustomCatalogProvider : MainAPI() {
         NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre ?: emptyList())
         NetflixMirrorStorage.addBareIds(o.code, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
-        val language = (data.language ?: data.lang)?.trim()?.takeIf { it.isNotEmpty() }
+        val language = normalizeLang(data.language) ?: normalizeLang(data.lang)
         val richPlot = buildInfoPlot(o, data, genre, rating, runTime, language)
 
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
@@ -239,6 +239,16 @@ class CustomCatalogProvider : MainAPI() {
      * genres line, then director, then the synopsis. Some of these also appear as
      * native chips, but the consolidated header reads cleaner at a glance.
      */
+    /** The source may send language as a String or an array of strings — normalize both. */
+    private fun normalizeLang(value: Any?): String? = when (value) {
+        is String -> value.trim().ifBlank { null }
+        is Collection<*> -> value.mapNotNull { it?.toString()?.trim()?.ifBlank { null } }
+            .distinct()
+            .joinToString(", ")
+            .ifBlank { null }
+        else -> null
+    }
+
     private fun buildInfoPlot(
         o: Ott,
         data: PostData,
