@@ -80,13 +80,28 @@ object NetflixMirrorStorage {
         if (changed) persist(ott)
     }
 
-    /** Upsert a title with known type ("m"/"s"), genres and name — called from load()/enrichment. */
+    /** Upsert a title's metadata. Empty fields keep any previously stored value (no clobber). */
     @Synchronized
-    fun addRich(ott: String, id: String, type: String, genres: List<String>, title: String = "") {
+    fun addRich(
+        ott: String,
+        id: String,
+        type: String,
+        genres: List<String>,
+        title: String = "",
+        year: String = "",
+        languages: List<String> = emptyList()
+    ) {
         val clean = id.trim()
         if (clean.isEmpty()) return
         val map = loadOtt(ott)
-        map[clean] = CatalogRecord(type, genres, title.trim())
+        val prev = map[clean]
+        map[clean] = CatalogRecord(
+            t = type,
+            g = if (genres.isNotEmpty()) genres else (prev?.g ?: emptyList()),
+            n = title.trim().ifEmpty { prev?.n ?: "" },
+            y = year.trim().ifEmpty { prev?.y ?: "" },
+            l = if (languages.isNotEmpty()) languages else (prev?.l ?: emptyList())
+        )
         persist(ott)
     }
 
@@ -106,7 +121,9 @@ object NetflixMirrorStorage {
 data class CatalogRecord(
     val t: String = "?",        // "m" movie, "s" series, "?" unknown
     val g: List<String> = emptyList(),
-    val n: String = ""          // title/name, empty until known
+    val n: String = "",         // title/name, empty until known
+    val y: String = "",         // year, empty until known
+    val l: List<String> = emptyList()  // languages, empty until known
 )
 
 data class CatalogStore(

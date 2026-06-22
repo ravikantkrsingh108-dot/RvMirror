@@ -17,20 +17,23 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * "All NetMirror" — a single catalog that aggregates Netflix / Prime Video /
- * Hotstar content into grouped, genre-tagged rows. It is driven by ids collected
- * passively while browsing those providers (see NetflixMirrorStorage).
+ * "All NetMirror" — aggregates Netflix / Prime Video / Hotstar into grouped,
+ * genre-tagged rows, driven by ids collected while browsing those providers.
  *
- * Ids start "bare" (type/genres unknown). A background enrichment pass fetches
- * each one's type + genres + title so it lands in the right Movies/Series and
- * genre rows. No display caps — every collected title is shown.
+ * Three switchable sections (tabs):
+ *   - Catalog      : <Source> Movies / Series / More + genre rows
+ *   - By Language  : one row per language
+ *   - By Year      : one row per release year (newest first)
+ *
+ * A background pass enriches each saved id with type + genres + title + year +
+ * languages so it lands in the right rows. Row headers show live counts.
  */
 class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
-        private const val MIN_GENRE_SIZE = 1     // show a genre row even for a single title
-        private const val ENRICH_CONCURRENCY = 10 // parallel post.php fetches per round
-        private const val PERSIST_EVERY = 100     // flush to storage after this many enriched
+        private const val MIN_GENRE_SIZE = 1
+        private const val ENRICH_CONCURRENCY = 10
+        private const val PERSIST_EVERY = 100
     }
 
     override val supportedTypes = setOf(
@@ -43,6 +46,12 @@ class CustomCatalogProvider : MainAPI() {
     override var mainUrl = "https://net52.cc"
     override var name = "All NetMirror"
     override val hasMainPage = true
+
+    override val mainPage = mainPageOf(
+        "all" to "Catalog",
+        "lang" to "By Language",
+        "year" to "By Year"
+    )
 
     private var cookie_value = ""
     private val enrichScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -96,59 +105,93 @@ class CustomCatalogProvider : MainAPI() {
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Kick off background categorization of any not-yet-known ids.
-        kickEnrichment()
+    /** Records across all sources, with the manual seed folded into Netflix. */
+    private fun allRecords(): List<Triple<Ott, String, CatalogRecord>> =
+        otts.flatMap { o ->
+            val m = NetflixMirrorStorage.getAll(o.code).toMutableMap()
+            if (o.code == "nf") {
+                CustomCatalogIds.ids.forEach { id ->
+                    if (id.isNotBlank() && !m.containsKey(id)) m[id] = CatalogRecord()
+                }
+            }
+            m.map { (id, rec) -> Triple(o, id, rec) }
+        }
 
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        kickEnrichment()
+        val rows = when (request.data) {
+            "lang" -> languageRows()
+            "year" -> yearRows()
+            else -> catalogRows()
+        }
+        return newHomePageResponse(rows, false)
+    }
+
+    private fun catalogRows(): List<HomePageList> {
         val rows = ArrayList<HomePageList>()
         val genreBuckets = LinkedHashMap<String, MutableList<SearchResponse>>()
 
         for (o in otts) {
-            val all = NetflixMirrorStorage.getAll(o.code).toMutableMap()
+            val m = NetflixMirrorStorage.getAll(o.code).toMutableMap()
             if (o.code == "nf") {
                 CustomCatalogIds.ids.forEach { id ->
-                    if (id.isNotBlank() && !all.containsKey(id)) all[id] = CatalogRecord()
+                    if (id.isNotBlank() && !m.containsKey(id)) m[id] = CatalogRecord()
                 }
             }
-            if (all.isEmpty()) continue
+            if (m.isEmpty()) continue
 
             val movies = ArrayList<SearchResponse>()
             val series = ArrayList<SearchResponse>()
             val more = ArrayList<SearchResponse>()
 
-            all.forEach { (id, rec) ->
+            m.forEach { (id, rec) ->
                 val c = card(o, id, rec.n)
                 when (rec.t) {
                     "m" -> movies.add(c)
                     "s" -> series.add(c)
                     else -> more.add(c)
                 }
-                rec.g.forEach { genre ->
-                    genreBuckets.getOrPut(genre) { ArrayList() }.add(c)
-                }
+                rec.g.forEach { genre -> genreBuckets.getOrPut(genre) { ArrayList() }.add(c) }
             }
 
-            if (movies.isNotEmpty()) rows.add(HomePageList("${o.label} Movies", movies.shuffled()))
-            if (series.isNotEmpty()) rows.add(HomePageList("${o.label} Series", series.shuffled()))
-            if (more.isNotEmpty()) rows.add(HomePageList("${o.label} • More", more.shuffled()))
+            if (movies.isNotEmpty()) rows.add(HomePageList("${o.label} Movies (${movies.size})", movies.shuffled()))
+            if (series.isNotEmpty()) rows.add(HomePageList("${o.label} Series (${series.size})", series.shuffled()))
+            if (more.isNotEmpty()) rows.add(HomePageList("${o.label} • More (${more.size})", more.shuffled()))
         }
 
-        // Genre rows, aggregated across all sources, biggest buckets first — no cap.
         genreBuckets.entries
             .filter { it.value.size >= MIN_GENRE_SIZE }
             .sortedByDescending { it.value.size }
-            .forEach { (genre, items) ->
-                rows.add(HomePageList(genre, items.shuffled()))
-            }
+            .forEach { (genre, items) -> rows.add(HomePageList("$genre (${items.size})", items.shuffled())) }
 
-        return newHomePageResponse(rows, false)
+        return rows
+    }
+
+    private fun languageRows(): List<HomePageList> {
+        val byLang = LinkedHashMap<String, MutableList<SearchResponse>>()
+        allRecords().forEach { (o, id, rec) ->
+            rec.l.forEach { lang -> byLang.getOrPut(lang) { ArrayList() }.add(card(o, id, rec.n)) }
+        }
+        return byLang.entries
+            .sortedByDescending { it.value.size }
+            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled()) }
+    }
+
+    private fun yearRows(): List<HomePageList> {
+        val byYear = LinkedHashMap<String, MutableList<SearchResponse>>()
+        allRecords().forEach { (o, id, rec) ->
+            rec.y.takeIf { it.isNotBlank() }?.let { y -> byYear.getOrPut(y) { ArrayList() }.add(card(o, id, rec.n)) }
+        }
+        return byYear.entries
+            .sortedByDescending { it.key.toIntOrNull() ?: 0 }
+            .map { (year, items) -> HomePageList("$year (${items.size})", items.shuffled()) }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
         val q = query.trim()
 
-        // 1) Local saved content — no 50 cap, matches everything we've categorized.
+        // 1) Local saved content — no 50 cap.
         val local = otts.flatMap { o ->
             NetflixMirrorStorage.getAll(o.code).entries
                 .filter { it.value.n.isNotEmpty() && it.value.n.contains(q, ignoreCase = true) }
@@ -177,12 +220,9 @@ class CustomCatalogProvider : MainAPI() {
             }
         }.flatten()
 
-        // Merge, de-duplicating by payload (id + source); local first.
         val seen = HashSet<String>()
         val out = ArrayList<SearchResponse>()
-        for (sr in local + live) {
-            if (seen.add(sr.url)) out.add(sr)
-        }
+        for (sr in local + live) if (seen.add(sr.url)) out.add(sr)
         return out
     }
 
@@ -201,10 +241,18 @@ class CustomCatalogProvider : MainAPI() {
 
         val episodes = arrayListOf<Episode>()
         val title = data.title
-        val cast = (data.cast?.split(",")?.map { it.trim() } ?: emptyList()).map { ActorData(Actor(it)) }
-        val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-        val rating = data.match?.replace("IMDb ", "")
+        val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        val langs = languagesOf(data)
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
+
+        // Director shows in the cast row with a role label; languages become chips.
+        val people = ArrayList<ActorData>()
+        data.cast?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?.forEach { people.add(ActorData(Actor(it))) }
+        data.director?.trim()?.takeIf { it.isNotEmpty() }
+            ?.let { people.add(ActorData(Actor(it), roleString = "Director")) }
+
+        val chips = genre + langs.map { "${flagFor(it)} $it" }
 
         val suggest = data.suggest?.map { card(o, it.id) }
 
@@ -229,109 +277,78 @@ class CustomCatalogProvider : MainAPI() {
             }
         }
 
-        // Feed the catalog: record this title (type + genres + name) and its suggestions.
-        NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre ?: emptyList(), title)
+        // Feed the catalog with full metadata + suggestions.
+        NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre, title, data.year, langs)
         NetflixMirrorStorage.addBareIds(o.code, data.suggest?.mapNotNull { it.id } ?: emptyList())
-
-        val languages = formatLanguages(data.language, data.lang)
-        val richPlot = buildInfoPlot(o, data, genre, rating, runTime, languages)
 
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = "https://imgcdn.kim/${o.poster}/$id.jpg"
             backgroundPosterUrl = "https://imgcdn.kim/${o.backdrop}/$id.jpg"
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
-            plot = richPlot
+            plot = data.desc?.trim()?.ifBlank { null }
             year = data.year.toIntOrNull()
-            tags = genre
-            actors = cast
-            this.score = Score.from10(rating)
+            tags = chips
+            actors = people
+            this.score = parseScore(data.match)
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
         }
     }
 
-    /** Split a String/array language value into individual, trimmed names. */
+    /** Parse "8.1", "IMDb 8.1" or "57% match" into a 0–10 score. */
+    private fun parseScore(match: String?): Score? {
+        if (match.isNullOrBlank()) return null
+        val num = Regex("""\d+(\.\d+)?""").find(match)?.value?.toDoubleOrNull() ?: return null
+        val tenScale = if (match.contains("%")) num / 10.0 else num
+        return Score.from10(tenScale.toString())
+    }
+
+    /** Language names from the source, which may be a String, an array, or array of {l,s} objects. */
+    private fun languagesOf(data: PostData): List<String> =
+        (languageList(data.language) + languageList(data.lang))
+            .map { it.replaceFirstChar { c -> c.uppercase() } }
+            .distinct()
+
     private fun languageList(value: Any?): List<String> = when (value) {
+        null -> emptyList()
         is String -> value.split(",", "/", "|", "&").map { it.trim() }.filter { it.isNotEmpty() }
-        is Collection<*> -> value.mapNotNull { it?.toString()?.trim()?.ifBlank { null } }
+        is Map<*, *> -> listOfNotNull(langFromMap(value))
+        is Collection<*> -> value.flatMap { languageList(it) }
         else -> emptyList()
     }
 
-    /** Best-effort flag for a (spoken) language. Falls back to a globe. */
+    private fun langFromMap(m: Map<*, *>): String? {
+        for (k in listOf("l", "lang", "language", "name", "title", "label", "n", "audio")) {
+            (m[k] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        }
+        return null
+    }
+
+    /** Best-effort flag for a spoken language; falls back to a globe. */
     private fun flagFor(language: String): String = when (language.lowercase().trim()) {
         "hindi", "tamil", "telugu", "malayalam", "kannada", "bengali", "marathi",
-        "punjabi", "gujarati", "bhojpuri", "urdu", "odia", "assamese" -> "🇮🇳" // 🇮🇳
-        "english" -> "🇬🇧"        // 🇬🇧
-        "korean" -> "🇰🇷"         // 🇰🇷
-        "japanese" -> "🇯🇵"       // 🇯🇵
-        "chinese", "mandarin", "cantonese" -> "🇨🇳" // 🇨🇳
-        "spanish", "español" -> "🇪🇸"  // 🇪🇸
-        "french" -> "🇫🇷"         // 🇫🇷
-        "german" -> "🇩🇪"         // 🇩🇪
-        "italian" -> "🇮🇹"        // 🇮🇹
-        "portuguese" -> "🇵🇹"     // 🇵🇹
-        "russian" -> "🇷🇺"        // 🇷🇺
-        "arabic" -> "🇸🇦"         // 🇸🇦
-        "thai" -> "🇹🇭"           // 🇹🇭
-        "turkish" -> "🇹🇷"        // 🇹🇷
-        "indonesian" -> "🇮🇩"     // 🇮🇩
-        "filipino", "tagalog" -> "🇵🇭" // 🇵🇭
-        "vietnamese" -> "🇻🇳"     // 🇻🇳
-        else -> "🌐"                          // 🌐
+        "punjabi", "gujarati", "bhojpuri", "urdu", "odia", "assamese" -> "🇮🇳"
+        "english" -> "🇬🇧"
+        "korean" -> "🇰🇷"
+        "japanese" -> "🇯🇵"
+        "chinese", "mandarin", "cantonese" -> "🇨🇳"
+        "spanish", "español" -> "🇪🇸"
+        "french" -> "🇫🇷"
+        "german" -> "🇩🇪"
+        "italian" -> "🇮🇹"
+        "portuguese" -> "🇵🇹"
+        "russian" -> "🇷🇺"
+        "arabic" -> "🇸🇦"
+        "thai" -> "🇹🇭"
+        "turkish" -> "🇹🇷"
+        "indonesian" -> "🇮🇩"
+        "filipino", "tagalog" -> "🇵🇭"
+        "vietnamese" -> "🇻🇳"
+        else -> "🌐"
     }
 
-    /** Combine source language fields into a "🇮🇳 Hindi  🇺🇸 English" style string. */
-    private fun formatLanguages(vararg values: Any?): String? {
-        val langs = values.flatMap { languageList(it) }
-            .map { it.replaceFirstChar { c -> c.uppercase() } }
-            .distinct()
-        if (langs.isEmpty()) return null
-        return langs.joinToString("   ") { "${flagFor(it)} $it" }
-    }
-
-    /**
-     * A clean, scannable detail-page header rendered above the synopsis:
-     *
-     *   📺 Netflix  ·  ⭐ 8.1  ·  🗓 2023  ·  ⏱ 124m  ·  🔞 16+
-     *   🌐 🇮🇳 Hindi  🇬🇧 English
-     *   🎭 Action · Thriller
-     *   🎬 Christopher Nolan
-     *   ──────────
-     *   <synopsis>
-     */
-    private fun buildInfoPlot(
-        o: Ott,
-        data: PostData,
-        genre: List<String>?,
-        rating: String?,
-        runTime: Int,
-        languages: String?
-    ): String? {
-        val facts = mutableListOf("📺 ${o.label}")
-        rating?.takeIf { it.isNotBlank() }?.let { facts.add("⭐ $it") }
-        data.year.takeIf { it.isNotBlank() }?.let { facts.add("🗓 $it") }
-        if (runTime > 0) facts.add("⏱ ${runTime}m")
-        data.ua?.takeIf { it.isNotBlank() }?.let { facts.add("🔞 $it") }
-
-        return buildString {
-            appendLine(facts.joinToString("   ·   "))
-            languages?.let { appendLine("🌐 $it") }
-            if (!genre.isNullOrEmpty()) appendLine("🎭 ${genre.joinToString(" · ")}")
-            data.director?.trim()?.takeIf { it.isNotEmpty() }?.let { appendLine("🎬 $it") }
-            data.desc?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                appendLine("──────────")
-                append(it)
-            }
-        }.trim().ifBlank { data.desc }
-    }
-
-    /**
-     * Background pass that categorizes every still-unknown id (type + genres +
-     * title) so it moves out of "• More" into the right grouped/genre rows.
-     * Runs once at a time, resumes across sessions (progress is persisted).
-     */
     private fun kickEnrichment() {
         if (enriching) return
         enriching = true
@@ -356,7 +373,6 @@ class CustomCatalogProvider : MainAPI() {
                     if (buffer.isNotEmpty()) NetflixMirrorStorage.addRichBatch(o.code, buffer)
                 }
             } catch (_: Exception) {
-                // best-effort; will resume on the next home open
             } finally {
                 enriching = false
             }
@@ -372,7 +388,7 @@ class CustomCatalogProvider : MainAPI() {
         ).parsed<PostData>()
         val type = if (data.episodes.first() == null) "m" else "s"
         val genres = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
-        CatalogRecord(type, genres, data.title.trim())
+        CatalogRecord(type, genres, data.title.trim(), data.year.trim(), languagesOf(data))
     } catch (e: Exception) {
         null
     }
