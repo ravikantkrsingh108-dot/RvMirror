@@ -118,7 +118,7 @@ suspend fun bypass(mainUrl: String): String {
             .followSslRedirects(false)
             .build()
         val request = Request.Builder()
-            .url("https://net52.cc/verify.php")
+            .url("https://net11.cc/verify.php")
             .post(formBody)
             .apply {
                 headers.forEach { (key, value) ->
