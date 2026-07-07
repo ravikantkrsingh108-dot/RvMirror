@@ -98,8 +98,8 @@ suspend fun bypass(mainUrl: String): String {
             "Cache-Control" to "max-age=0",
             "Connection" to "keep-alive",
             "Content-Type" to "application/x-www-form-urlencoded",
-            "Origin" to "https://net11.cc",
-            "Referer" to "https://net11.cc/verify2",
+            "Origin" to "https://net22.cc",
+            "Referer" to "https://net22.cc/verify2",
             "sec-ch-ua" to "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
             "sec-ch-ua-mobile" to "?0",
             "sec-ch-ua-platform" to "\"Windows\"",
@@ -118,7 +118,7 @@ suspend fun bypass(mainUrl: String): String {
             .followSslRedirects(false)
             .build()
         val request = Request.Builder()
-            .url("https://net11.cc/verify.php")
+            .url("https://net52.cc/verify.php")
             .post(formBody)
             .apply {
                 headers.forEach { (key, value) ->
