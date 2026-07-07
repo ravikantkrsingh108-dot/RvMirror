@@ -29,7 +29,7 @@ import java.io.File
  */
 class CatalogCrawlerTest {
 
-    private val mainUrl = "https://net11.cc"
+    private val mainUrl = "https://net52.cc"
 
     // Which catalog to crawl. Netflix: ott="nf", pathPrefix="".
     // Prime Video: ott="pv", pathPrefix="pv/".  (Custom Catalog uses nf.)
