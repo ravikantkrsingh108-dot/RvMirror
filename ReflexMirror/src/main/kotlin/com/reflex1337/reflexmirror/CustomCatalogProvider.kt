@@ -343,3 +343,115 @@ class CustomCatalogProvider : MainAPI() {
                             .forEach { (id, rec) -> if (rec != null) buffer[id] = rec }
                         if (buffer.size >= PERSIST_EVERY) {
                             NetflixMirrorStorage.addRichBatch(o.code, HashMap(buffer))
+                            buffer.clear()
+                        }
+                    }
+                    if (buffer.isNotEmpty()) NetflixMirrorStorage.addRichBatch(o.code, buffer)
+                }
+            } catch (_: Exception) {
+            } finally {
+                enriching = false
+            }
+        }
+    }
+
+    private suspend fun fetchRecord(o: Ott, id: String): CatalogRecord? = try {
+        val data = app.get(
+            "$mainUrl/mobile/${o.path}post.php?id=$id&t=${APIHolder.unixTime}",
+            headers,
+            referer = "$mainUrl/home",
+            cookies = cookies(o.code)
+        ).parsed<PostData>()
+        val type = if (data.episodes.first() == null) "m" else "s"
+        val genres = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        CatalogRecord(type, genres, data.title.trim(), data.year.trim(), languagesOf(data))
+    } catch (e: Exception) {
+        null
+    }
+
+    private suspend fun getEpisodes(
+        o: Ott, title: String, eid: String, sid: String, page: Int
+    ): List<Episode> {
+        val episodes = arrayListOf<Episode>()
+        var pg = page
+        while (true) {
+            val data = app.get(
+                "$mainUrl/mobile/${o.path}episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
+                headers,
+                referer = "$mainUrl/home",
+                cookies = cookies(o.code)
+            ).parsed<EpisodesData>()
+            data.episodes?.mapTo(episodes) {
+                newEpisode(LoadData(title, it.id, o.code)) {
+                    name = it.t
+                    episode = it.ep.replace("E", "").toIntOrNull()
+                    season = it.s.replace("S", "").toIntOrNull()
+                    this.posterUrl = "https://imgcdn.kim/${o.epDir}/${it.id}.jpg"
+                    this.runTime = it.time.replace("m", "").toIntOrNull()
+                }
+            }
+            if (data.nextPageShow == 0) break
+            pg++
+        }
+        return episodes
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val apiBase = resolveApiUrl()
+        val ld = parseJson<LoadData>(data)
+        val response = app.get(
+            "$apiBase/newtv/player.php?id=${ld.id}",
+            headers = buildNewTvHeaders(ld.ott, mapOf("Usertoken" to ""))
+        ).parsed<NewTvPlayerResponse>()
+
+        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+
+        callback.invoke(
+            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
+                this.referer = response.referer ?: apiBase
+            }
+        )
+        return true
+    }
+
+    @Suppress("ObjectLiteralToLambda")
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                val urlStr = request.url.toString()
+                if (urlStr.contains(".m3u8") || urlStr.contains(".ts") || urlStr.contains(".jpg")) {
+                    val bypass = bypassResult
+                    val cookieParts = mutableListOf("t_hash_t=${bypass?.cookie ?: ""}", "hd=on", "ott=nf")
+                    if (bypass != null && bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
+                    if (bypass != null && bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
+
+                    val newRequest = request.newBuilder()
+                        .header("Referer", "$mainUrl/mobile/home?app=1")
+                        .header("Cookie", cookieParts.joinToString("; "))
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
+                        .header("Origin", mainUrl)
+                        .build()
+                    return chain.proceed(newRequest)
+                }
+                return chain.proceed(request)
+            }
+        }
+    }
+
+    data class Ref(
+        val id: String,
+        val ott: String
+    )
+
+    data class LoadData(
+        val title: String,
+        val id: String,
+        val ott: String
+    )
+}
