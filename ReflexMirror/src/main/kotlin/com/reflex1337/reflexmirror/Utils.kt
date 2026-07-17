@@ -62,9 +62,7 @@ inline fun <reified T : Any> tryParseJson(text: String): T? {
 
 fun convertRuntimeToMinutes(runtime: String): Int {
     var totalMinutes = 0
-
     val parts = runtime.split(" ")
-
     for (part in parts) {
         when {
             part.endsWith("h") -> {
@@ -77,73 +75,150 @@ fun convertRuntimeToMinutes(runtime: String): Int {
             }
         }
     }
-
     return totalMinutes
 }
 
-suspend fun bypass(mainUrl: String): String {
-    // Check persistent storage first
-    val (savedCookie, savedTimestamp) = NetflixMirrorStorage.getCookie()
+val BROWSER_HEADERS = mapOf(
+    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
+    "Connection" to "keep-alive",
+    "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
+    "sec-ch-ua-mobile" to "?0",
+    "sec-ch-ua-platform" to "\"Android\"",
+    "Sec-Fetch-Dest" to "document",
+    "Sec-Fetch-Mode" to "navigate",
+    "Sec-Fetch-Site" to "same-origin",
+    "Sec-Fetch-User" to "?1",
+    "Upgrade-Insecure-Requests" to "1",
+    "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
+    "X-Requested-With" to "XMLHttpRequest"
+)
 
-    // Return cached cookie if valid (≤15 hours old)
-    if (!savedCookie.isNullOrEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
-        return savedCookie
+data class BypassResult(val cookie: String, val addhash: String, val usertoken: String, val dataTime: String)
+
+@Volatile var cachedBypass: BypassResult? = null
+@Volatile var cachedBypassTime: Long = 0L
+
+suspend fun bypass(mainUrl: String): BypassResult {
+    val cached = cachedBypass
+    if (cached != null && cached.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
+        return cached
     }
 
-    val newCookie = try {
-        val headers = mapOf(
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Encoding" to "gzip, deflate, br, zstd",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Cache-Control" to "max-age=0",
-            "Connection" to "keep-alive",
-            "Content-Type" to "application/x-www-form-urlencoded",
-            "Origin" to "https://net22.cc",
-            "Referer" to "https://net22.cc/verify2",
-            "sec-ch-ua" to "\"Google Chrome\";v=\"147\", \"Not.A/Brand\";v=\"8\", \"Chromium\";v=\"147\"",
-            "sec-ch-ua-mobile" to "?0",
-            "sec-ch-ua-platform" to "\"Windows\"",
-            "Sec-Fetch-Dest" to "document",
-            "Sec-Fetch-Mode" to "navigate",
-            "Sec-Fetch-Site" to "same-origin",
-            "Sec-Fetch-User" to "?1",
-            "Upgrade-Insecure-Requests" to "1",
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-        )
-        val formBody = FormBody.Builder()
-            .add("g-recaptcha-response", UUID.randomUUID().toString())
-            .build()
-        val client = app.baseClient.newBuilder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-        val request = Request.Builder()
-            .url("https://net52.cc/verify.php")
-            .post(formBody)
-            .apply {
-                headers.forEach { (key, value) ->
-                    addHeader(key, value)
+    // Step 1: GET homepage to get cookie and check for ad wall
+    val homeResp = app.get(
+        "$mainUrl/mobile/home?app=1",
+        headers = BROWSER_HEADERS,
+        referer = "$mainUrl/mobile/home?app=1"
+    )
+    var cookie = ""
+    homeResp.okhttpResponse.headers("Set-Cookie").forEach { h ->
+        if (h.contains("t_hash_t=")) {
+            cookie = h.substringAfter("t_hash_t=").substringBefore(";")
+        }
+    }
+    if (cookie.isEmpty()) {
+        cookie = homeResp.cookies["t_hash_t"] ?: ""
+    }
+
+    // Fallback to verify.php if homepage didn't give cookie
+    if (cookie.isEmpty()) {
+        try {
+            val client = app.baseClient.newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+            val formBody = FormBody.Builder()
+                .add("g-recaptcha-response", UUID.randomUUID().toString())
+                .build()
+            val request = Request.Builder()
+                .url("$mainUrl/verify.php")
+                .post(formBody)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
+                .header("Referer", "$mainUrl/verify2")
+                .header("Origin", mainUrl)
+                .build()
+            val response = client.newCall(request).execute()
+            response.headers("Set-Cookie").forEach { h ->
+                if (h.contains("t_hash_t=")) {
+                    cookie = h.substringAfter("t_hash_t=").substringBefore(";")
                 }
             }
-            .build()
-        client.newCall(request).execute().use { response ->
-            response.headers("Set-Cookie")
-                .firstOrNull { it.startsWith("t_hash_t=") }
-                ?.substringAfter("t_hash_t=")
-                ?.substringBefore(";")
-                .orEmpty()
-        }
-    } catch (e: Exception) {
-        // Clear invalid cookie on failure
-        NetflixMirrorStorage.clearCookie()
-        throw e
+            response.close()
+        } catch (_: Exception) {}
     }
 
-    // Persist the new cookie
-    if (newCookie.isNotEmpty()) {
-        NetflixMirrorStorage.saveCookie(newCookie)
+    if (cookie.isEmpty()) return BypassResult("", "", "", "")
+
+    val doc = homeResp.document
+    val html = doc.html()
+
+    // Check if there's NO ad wall
+    if (!html.contains("We Need Support") || !html.contains("open-support")) {
+        val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
+        val result = BypassResult(cookie, "", "", dataTime)
+        cachedBypass = result
+        cachedBypassTime = System.currentTimeMillis()
+        NetflixMirrorStorage.saveCookie(cookie)
+        return result
     }
-    return newCookie
+
+    // Ad wall exists - extract addhash
+    val addhash = doc.selectFirst("body")?.attr("data-addhash") ?: ""
+    val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
+
+    if (addhash.isBlank()) {
+        val result = BypassResult(cookie, "", "", dataTime)
+        cachedBypass = result
+        cachedBypassTime = System.currentTimeMillis()
+        return result
+    }
+
+    // Extract Qury and Vsite2 from page JavaScript
+    val qury = Regex("""Qury\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "ffr455"
+    val vsite = Regex("""Vsite2\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "userver"
+
+    // Simulate ad click
+    val adClickUrl = "https://$vsite.net52.cc/?$qury=$addhash&a=y&t=${Math.random()}"
+    try {
+        app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$mainUrl/mobile/home?app=1")
+    } catch (_: Exception) {}
+
+    // Wait for ad to "complete" (25 seconds)
+    kotlinx.coroutines.delay(25000L)
+
+    // Step 4: POST to verify2.php with addhash to confirm ad was watched
+    var usertoken = ""
+    var finalCookie = cookie
+    for (attempt in 1..10) {
+        kotlinx.coroutines.delay(2000L)
+        try {
+            val verifyResp = app.post(
+                "$mainUrl/mobile/verify2.php",
+                data = mapOf("verify" to addhash),
+                headers = BROWSER_HEADERS,
+                referer = "$mainUrl/mobile/home?app=1"
+            )
+            val newCookie = verifyResp.cookies["t_hash_t"]
+            if (!newCookie.isNullOrBlank()) finalCookie = newCookie
+
+            val body = verifyResp.text
+            val json = tryParseJson<Map<String, String>>(body)
+            if (json != null) {
+                val status = json["statusup"] ?: ""
+                if (status.equals("All Done", ignoreCase = true)) {
+                    usertoken = json["usertoken"] ?: json["token"] ?: json["utoken"] ?: json["user_token"] ?: ""
+                    break
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    val result = BypassResult(finalCookie, addhash, usertoken, dataTime)
+    cachedBypass = result
+    cachedBypassTime = System.currentTimeMillis()
+    NetflixMirrorStorage.saveCookie(finalCookie)
+    return result
 }
 
 val newTvBaseHeaders = mapOf(
