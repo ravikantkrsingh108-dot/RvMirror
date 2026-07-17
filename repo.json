@@ -1,8 +1,8 @@
 {
-  "name": "RvMirror",
-  "description": "Netflix, Prime Video, Disney+ Hotstar mirror with a self-populating, randomized Custom Catalog.",
-  "manifestVersion": 1,
-  "pluginLists": [
-    "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/plugins.json"
-  ]
+    "name": "RvMirror",
+    "description": "Netflix, Prime Video, Disney+ Hotstar mirror with a self-populating, randomized Custom Catalog.",
+    "manifestVersion": 1,
+    "pluginLists": [
+        "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/builds/plugins.json"
+    ]
 }
