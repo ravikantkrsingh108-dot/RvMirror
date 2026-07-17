@@ -7,6 +7,8 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import okhttp3.Interceptor
+import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
@@ -17,6 +19,7 @@ open class DisneyStudioProvider(
     companion object {
         var context: Context? = null
     }
+    
     override val supportedTypes = setOf(
         TvType.Movie,
         TvType.TvSeries,
@@ -29,30 +32,18 @@ open class DisneyStudioProvider(
     override var name = displayName
 
     override val hasMainPage = true
-    private var cookie_value = ""
-    private val headers = mapOf(
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-        "Cache-Control" to "max-age=0",
-        "Connection" to "keep-alive",
-        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Android\"",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "same-origin",
-        "Sec-Fetch-User" to "?1",
-        "Upgrade-Insecure-Requests" to "1",
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-        "X-Requested-With" to "XMLHttpRequest"
-    )
+    private var bypassResult: BypassResult? = null
+    private val headers = BROWSER_HEADERS
 
     private fun buildCookies(): Map<String, String> {
         val cookies = mutableMapOf(
-            "t_hash_t" to cookie_value,
+            "t_hash_t" to (bypassResult?.cookie ?: ""),
             "ott" to "dp",
             "hd" to "on"
         )
+        bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
+        bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { cookies["usertoken"] = it }
+        
         if (studio.isNotEmpty()) {
             cookies["studio"] = studio
         }
@@ -60,7 +51,10 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+            bypassResult = bypass(mainUrl)
+        }
+        
         val document = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = buildCookies(),
@@ -91,7 +85,10 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+            bypassResult = bypass(mainUrl)
+        }
+        
         val id = parseJson<Id>(url).id
         val data = app.get(
             "$mainUrl/mobile/hs/post.php?id=$id&t=${APIHolder.unixTime}",
@@ -208,13 +205,39 @@ open class DisneyStudioProvider(
 
         return true
     }
+
+    @Suppress("ObjectLiteralToLambda")
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                val urlStr = request.url.toString()
+                if (urlStr.contains(".m3u8") || urlStr.contains(".ts") || urlStr.contains(".jpg")) {
+                    val bypass = bypassResult
+                    val cookieParts = mutableListOf("t_hash_t=${bypass?.cookie ?: ""}", "hd=on", "ott=dp")
+                    if (bypass != null && bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
+                    if (bypass != null && bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
+                    if (studio.isNotEmpty()) cookieParts.add("studio=$studio")
+
+                    val newRequest = request.newBuilder()
+                        .header("Referer", "$mainUrl/mobile/home?app=1")
+                        .header("Cookie", cookieParts.joinToString("; "))
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
+                        .header("Origin", mainUrl)
+                        .build()
+                    return chain.proceed(newRequest)
+                }
+                return chain.proceed(request)
+            }
+        }
+    }
+
+    data class Id(
+        val id: String
+    )
+
+    data class LoadData(
+        val title: String,
+        val id: String
+    )
 }
-
-data class Id(
-    val id: String
-)
-
-data class LoadData(
-    val title: String,
-    val id: String
-)
