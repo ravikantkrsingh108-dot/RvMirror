@@ -31,32 +31,21 @@ class HotStarMirrorProvider : MainAPI() {
     override var name = "Hotstar"
 
     override val hasMainPage = true
-    private var cookie_value = ""
-    private val headers = mapOf(
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-        "Cache-Control" to "max-age=0",
-        "Connection" to "keep-alive",
-        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Android\"",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "same-origin",
-        "Sec-Fetch-User" to "?1",
-        "Upgrade-Insecure-Requests" to "1",
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-        "X-Requested-With" to "XMLHttpRequest"
-    )
+    private var bypassResult: BypassResult? = null
+    private val headers = BROWSER_HEADERS
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
+        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+            bypassResult = bypass(mainUrl)
+        }
+        val cookies = mutableMapOf(
+            "t_hash_t" to (bypassResult?.cookie ?: ""),
             "ott" to "hs",
             "hd" to "on"
         )
+        bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
+        bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { cookies["usertoken"] = it }
+
         val document = app.get(
             "$mainUrl/mobile/home?app=1",
             cookies = cookies,
@@ -67,7 +56,6 @@ class HotStarMirrorProvider : MainAPI() {
             it.toHomePageList()
         }
 
-        // Passively record every id shown, so the Custom Catalog self-populates.
         val seenIds = document.select("article, .top10-post").mapNotNull {
             (it.selectFirst("a")?.attr("data-post")?.ifBlank { null }) ?: it.attr("data-post").ifBlank { null }
         }
@@ -86,9 +74,6 @@ class HotStarMirrorProvider : MainAPI() {
 
     private fun Element.toSearchResult(): SearchResponse? {
         val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
-        // val posterUrl =
-        //     fixUrlNull(selectFirst(".card-img-container img, .top10-img img")?.attr("data-src"))
-
         return newAnimeSearchResponse("", Id(id).toJson()) {
             this.posterUrl = "https://imgcdn.kim/hs/v/$id.jpg"
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
@@ -96,13 +81,17 @@ class HotStarMirrorProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "hd" to "on",
-            "ott" to "hs"
+        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+            bypassResult = bypass(mainUrl)
+        }
+        val cookies = mutableMapOf(
+            "t_hash_t" to (bypassResult?.cookie ?: ""),
+            "ott" to "hs",
+            "hd" to "on"
         )
+        bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
+        bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { cookies["usertoken"] = it }
+
         val url = "$mainUrl/mobile/hs/search.php?s=$query&t=${APIHolder.unixTime}"
         val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
 
@@ -115,14 +104,18 @@ class HotStarMirrorProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        
-        cookie_value = if(cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+            bypassResult = bypass(mainUrl)
+        }
         val id = parseJson<Id>(url).id
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "hd" to "on",
-            "ott" to "hs"
+        val cookies = mutableMapOf(
+            "t_hash_t" to (bypassResult?.cookie ?: ""),
+            "ott" to "hs",
+            "hd" to "on"
         )
+        bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
+        bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { cookies["usertoken"] = it }
+
         val data = app.get(
             "$mainUrl/mobile/hs/post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
@@ -153,7 +146,6 @@ class HotStarMirrorProvider : MainAPI() {
             }
         }
 
-        // Record this title (type + genres) and its suggestions for the Custom Catalog.
         NetflixMirrorStorage.addRich(
             "hs", id,
             if (data.episodes.first() == null) "m" else "s",
@@ -207,11 +199,14 @@ class HotStarMirrorProvider : MainAPI() {
         title: String, eid: String, sid: String, page: Int
     ): List<Episode> {
         val episodes = arrayListOf<Episode>()
-        val cookies = mapOf(
-            "t_hash_t" to cookie_value,
-            "hd" to "on",
-            "ott" to "hs"
+        val cookies = mutableMapOf(
+            "t_hash_t" to (bypassResult?.cookie ?: ""),
+            "ott" to "hs",
+            "hd" to "on"
         )
+        bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
+        bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { cookies["usertoken"] = it }
+
         var pg = page
         while (true) {
             val data = app.get(
@@ -264,9 +259,18 @@ class HotStarMirrorProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
+                val urlStr = request.url.toString()
+                if (urlStr.contains(".m3u8") || urlStr.contains(".ts") || urlStr.contains(".jpg")) {
+                    val bypass = bypassResult
+                    val cookieParts = mutableListOf("t_hash_t=${bypass?.cookie ?: ""}", "hd=on", "ott=hs")
+                    if (bypass != null && bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
+                    if (bypass != null && bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
+
                     val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
+                        .header("Referer", "$mainUrl/mobile/home?app=1")
+                        .header("Cookie", cookieParts.joinToString("; "))
+                        .header("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0")
+                        .header("Origin", mainUrl)
                         .build()
                     return chain.proceed(newRequest)
                 }
