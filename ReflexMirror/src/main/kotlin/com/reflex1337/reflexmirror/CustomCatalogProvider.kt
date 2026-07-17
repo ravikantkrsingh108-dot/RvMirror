@@ -16,18 +16,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/**
- * "All NetMirror" — aggregates Netflix / Prime Video / Hotstar into grouped,
- * genre-tagged rows, driven by ids collected while browsing those providers.
- *
- * Three switchable sections (tabs):
- *   - Catalog      : <Source> Movies / Series / More + genre rows
- *   - By Language  : one row per language
- *   - By Year      : one row per release year (newest first)
- *
- * A background pass enriches each saved id with type + genres + title + year +
- * languages so it lands in the right rows. Row headers show live counts.
- */
 class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
@@ -43,7 +31,7 @@ class CustomCatalogProvider : MainAPI() {
         TvType.AsianDrama
     )
     override var lang = "en"
-    override var mainUrl = "https://net11.cc"
+    override var mainUrl = "https://net52.cc"
     override var name = "All NetMirror"
     override val hasMainPage = true
 
@@ -57,22 +45,7 @@ class CustomCatalogProvider : MainAPI() {
     private val enrichScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile private var enriching = false
 
-    private val headers = mapOf(
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language" to "en-IN,en-US;q=0.9,en;q=0.8",
-        "Cache-Control" to "max-age=0",
-        "Connection" to "keep-alive",
-        "sec-ch-ua" to "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Android WebView\";v=\"144\"",
-        "sec-ch-ua-mobile" to "?0",
-        "sec-ch-ua-platform" to "\"Android\"",
-        "Sec-Fetch-Dest" to "document",
-        "Sec-Fetch-Mode" to "navigate",
-        "Sec-Fetch-Site" to "same-origin",
-        "Sec-Fetch-User" to "?1",
-        "Upgrade-Insecure-Requests" to "1",
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 5 Build/TQ3A.230901.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/144.0.7559.132 Safari/537.36 /OS.Gatu v3.0",
-        "X-Requested-With" to "XMLHttpRequest"
-    )
+    private val headers = BROWSER_HEADERS
 
     private data class Ott(
         val code: String,
@@ -91,11 +64,16 @@ class CustomCatalogProvider : MainAPI() {
 
     private fun ottOf(code: String): Ott = otts.firstOrNull { it.code == code } ?: otts[0]
 
-    private fun cookies(ott: String) = mapOf(
-        "t_hash_t" to cookie_value,
-        "hd" to "on",
-        "ott" to ott
-    )
+    private fun cookies(ott: String): Map<String, String> {
+        val c = mutableMapOf(
+            "t_hash_t" to (bypassResult?.cookie ?: ""),
+            "hd" to "on",
+            "ott" to ott
+        )
+        bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { c["addhash"] = it }
+        bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { c["usertoken"] = it }
+        return c
+    }
 
     private fun posterUrl(o: Ott, id: String) = "https://imgcdn.kim/${o.poster}/$id.jpg"
 
@@ -105,7 +83,6 @@ class CustomCatalogProvider : MainAPI() {
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
 
-    /** Records across all sources, with the manual seed folded into Netflix. */
     private fun allRecords(): List<Triple<Ott, String, CatalogRecord>> =
         otts.flatMap { o ->
             val m = NetflixMirrorStorage.getAll(o.code).toMutableMap()
@@ -188,17 +165,17 @@ class CustomCatalogProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+            bypassResult = bypass(mainUrl)
+        }
         val q = query.trim()
 
-        // 1) Local saved content — no 50 cap.
         val local = otts.flatMap { o ->
             NetflixMirrorStorage.getAll(o.code).entries
                 .filter { it.value.n.isNotEmpty() && it.value.n.contains(q, ignoreCase = true) }
                 .map { (id, rec) -> card(o, id, rec.n) }
         }
 
-        // 2) Live server search across every source (and feed the catalog).
         val live = otts.amap { o ->
             try {
                 val results = app.get(
@@ -227,7 +204,9 @@ class CustomCatalogProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        cookie_value = if (cookie_value.isEmpty()) bypass(mainUrl) else cookie_value
+        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+            bypassResult = bypass(mainUrl)
+        }
         val ref = parseJson<Ref>(url)
         val o = ottOf(ref.ott)
         val id = ref.id
@@ -245,7 +224,6 @@ class CustomCatalogProvider : MainAPI() {
         val langs = languagesOf(data)
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
 
-        // Director shows in the cast row with a role label; languages become chips.
         val people = ArrayList<ActorData>()
         data.cast?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
             ?.forEach { people.add(ActorData(Actor(it))) }
@@ -277,7 +255,6 @@ class CustomCatalogProvider : MainAPI() {
             }
         }
 
-        // Feed the catalog with full metadata + suggestions.
         NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre, title, data.year, langs)
         NetflixMirrorStorage.addBareIds(o.code, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
@@ -297,7 +274,6 @@ class CustomCatalogProvider : MainAPI() {
         }
     }
 
-    /** Parse "8.1", "IMDb 8.1" or "57% match" into a 0–10 score. */
     private fun parseScore(match: String?): Score? {
         if (match.isNullOrBlank()) return null
         val num = Regex("""\d+(\.\d+)?""").find(match)?.value?.toDoubleOrNull() ?: return null
@@ -305,7 +281,6 @@ class CustomCatalogProvider : MainAPI() {
         return Score.from10(tenScale.toString())
     }
 
-    /** Language names from the source, which may be a String, an array, or array of {l,s} objects. */
     private fun languagesOf(data: PostData): List<String> =
         (languageList(data.language) + languageList(data.lang))
             .map { it.replaceFirstChar { c -> c.uppercase() } }
@@ -326,7 +301,6 @@ class CustomCatalogProvider : MainAPI() {
         return null
     }
 
-    /** Best-effort flag for a spoken language; falls back to a globe. */
     private fun flagFor(language: String): String = when (language.lowercase().trim()) {
         "hindi", "tamil", "telugu", "malayalam", "kannada", "bengali", "marathi",
         "punjabi", "gujarati", "bhojpuri", "urdu", "odia", "assamese" -> "🇮🇳"
@@ -354,7 +328,9 @@ class CustomCatalogProvider : MainAPI() {
         enriching = true
         enrichScope.launch {
             try {
-                if (cookie_value.isEmpty()) cookie_value = bypass(mainUrl)
+                if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+                    bypassResult = bypass(mainUrl)
+                }
                 for (o in otts) {
                     val bare = NetflixMirrorStorage.getAll(o.code)
                         .filterValues { it.t == "?" }
@@ -367,106 +343,3 @@ class CustomCatalogProvider : MainAPI() {
                             .forEach { (id, rec) -> if (rec != null) buffer[id] = rec }
                         if (buffer.size >= PERSIST_EVERY) {
                             NetflixMirrorStorage.addRichBatch(o.code, HashMap(buffer))
-                            buffer.clear()
-                        }
-                    }
-                    if (buffer.isNotEmpty()) NetflixMirrorStorage.addRichBatch(o.code, buffer)
-                }
-            } catch (_: Exception) {
-            } finally {
-                enriching = false
-            }
-        }
-    }
-
-    private suspend fun fetchRecord(o: Ott, id: String): CatalogRecord? = try {
-        val data = app.get(
-            "$mainUrl/mobile/${o.path}post.php?id=$id&t=${APIHolder.unixTime}",
-            headers,
-            referer = "$mainUrl/home",
-            cookies = cookies(o.code)
-        ).parsed<PostData>()
-        val type = if (data.episodes.first() == null) "m" else "s"
-        val genres = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
-        CatalogRecord(type, genres, data.title.trim(), data.year.trim(), languagesOf(data))
-    } catch (e: Exception) {
-        null
-    }
-
-    private suspend fun getEpisodes(
-        o: Ott, title: String, eid: String, sid: String, page: Int
-    ): List<Episode> {
-        val episodes = arrayListOf<Episode>()
-        var pg = page
-        while (true) {
-            val data = app.get(
-                "$mainUrl/mobile/${o.path}episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
-                headers,
-                referer = "$mainUrl/home",
-                cookies = cookies(o.code)
-            ).parsed<EpisodesData>()
-            data.episodes?.mapTo(episodes) {
-                newEpisode(LoadData(title, it.id, o.code)) {
-                    name = it.t
-                    episode = it.ep.replace("E", "").toIntOrNull()
-                    season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/${o.epDir}/${it.id}.jpg"
-                    this.runTime = it.time.replace("m", "").toIntOrNull()
-                }
-            }
-            if (data.nextPageShow == 0) break
-            pg++
-        }
-        return episodes
-    }
-
-    override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val apiBase = resolveApiUrl()
-        val ld = parseJson<LoadData>(data)
-        val response = app.get(
-            "$apiBase/newtv/player.php?id=${ld.id}",
-            headers = buildNewTvHeaders(ld.ott, mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
-
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
-
-        callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
-                this.referer = response.referer ?: apiBase
-            }
-        )
-        return true
-    }
-
-    @Suppress("ObjectLiteralToLambda")
-    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
-        return object : Interceptor {
-            override fun intercept(chain: Interceptor.Chain): Response {
-                val request = chain.request()
-                if (request.url.toString().contains(".m3u8")) {
-                    val newRequest = request.newBuilder()
-                        .header("Cookie", "hd=on")
-                        .build()
-                    return chain.proceed(newRequest)
-                }
-                return chain.proceed(request)
-            }
-        }
-    }
-
-    data class Ref(
-        val id: String,
-        val ott: String
-    )
-
-    data class LoadData(
-        val title: String,
-        val id: String,
-        val ott: String
-    )
-}
