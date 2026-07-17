@@ -52,6 +52,7 @@ subprojects {
         setRepo(System.getenv("GITHUB_REPOSITORY") 
             ?: "https://github.com/Reflex755/ReflexRepo")
         authors = listOf("Reflex1337")
+        useJsDelivr = false // <--- ADD THIS LINE
     }
 
     android {
