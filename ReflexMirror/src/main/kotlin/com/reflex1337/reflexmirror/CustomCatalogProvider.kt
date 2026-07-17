@@ -53,7 +53,7 @@ class CustomCatalogProvider : MainAPI() {
         "year" to "By Year"
     )
 
-    private var cookie_value = ""
+    private var bypassResult: BypassResult? = null
     private val enrichScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile private var enriching = false
 
