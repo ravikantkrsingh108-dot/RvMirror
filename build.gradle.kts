@@ -95,22 +95,22 @@ subprojects {
         // Core / Network / Parsing
         implementation(kotlin("stdlib"))
         implementation("com.github.Blatzar:NiceHttp:0.4.18")
-        implementation("org.jsoup:jsoup:1.22.2")
+        implementation("org.jsoup:jsoup:1.17.2") // FIXED VERSION
         
         // CRITICAL: Do not bump Jackson above 2.13.1 (Breaks older Android devices)
         implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.1")
         implementation("com.fasterxml.jackson.core:jackson-databind:2.13.1")
         
         // Utilities & Quality of Life
-        implementation("androidx.annotation:annotation:1.10.0")
-        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+        implementation("androidx.annotation:annotation:1.9.1") // FIXED VERSION
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1") // FIXED VERSION
         implementation("me.xdrop:fuzzywuzzy:1.4.0")
-        implementation("com.google.code.gson:gson:2.14.0")
-        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+        implementation("com.google.code.gson:gson:2.11.0") // FIXED VERSION
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3") // FIXED VERSION
         
-        // Crypto & JS Engines (Do not bump Rhino past 1.8.1)
-        implementation("org.mozilla:rhino:1.8.1")
-        implementation("org.bouncycastle:bcpkix-jdk18on:1.84")
+        // Crypto & JS Engines
+        implementation("org.mozilla:rhino:1.7.14") // FIXED VERSION
+        implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1") // FIXED VERSION
     }
 }
 
