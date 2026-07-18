@@ -68,6 +68,8 @@ subprojects {
         tasks.withType<KotlinJvmCompile> {
             compilerOptions {
                 jvmTarget.set(JvmTarget.JVM_1_8)
+                // ADD THIS LINE TO IGNORE THE METADATA ERROR:
+                freeCompilerArgs.addAll("-Xskip-metadata-version-check")
             }
         }
     }
