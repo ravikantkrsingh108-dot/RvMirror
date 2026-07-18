@@ -13,9 +13,9 @@ buildscript {
     }
 
     dependencies {
-        classpath("com.android.tools.build:gradle:8.7.3") // UPGRADED AGP
+        classpath("com.android.tools.build:gradle:8.5.2")
         classpath("com.github.recloudstream.gradle:gradle:81b1d424d")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0") // UPGRADED TO 2.1.0
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24") // REVERTED TO 1.9.24
     }
 }
 
@@ -68,8 +68,7 @@ subprojects {
         tasks.withType<KotlinJvmCompile> {
             compilerOptions {
                 jvmTarget.set(JvmTarget.JVM_1_8)
-                // ADD THIS LINE TO IGNORE THE METADATA ERROR:
-                freeCompilerArgs.addAll("-Xskip-metadata-version-check")
+                // Removed -Xskip-metadata-version-check
             }
         }
     }
