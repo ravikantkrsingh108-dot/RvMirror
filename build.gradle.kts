@@ -15,7 +15,7 @@ buildscript {
     dependencies {
         classpath("com.android.tools.build:gradle:8.5.2")
         classpath("com.github.recloudstream.gradle:gradle:81b1d424d")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24") // MUST BE 1.9.24
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.20") // UPGRADED TO 2.0.20
     }
 }
 
@@ -74,8 +74,13 @@ subprojects {
 
     dependencies {
         val cloudstream by configurations
-        // Cloudstream provides ALL network and parsing libraries. Do not add implementation dependencies.
+        val coreLibraryDesugaring by configurations
+        
+        // Cloudstream compilation stubs
         cloudstream("com.lagradost:cloudstream3:pre-release")
+        
+        // REQUIRED FOR KOTLIN 2.0+ - Prevents D8 metadata crashes
+        coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.2")
     }
 }
 
