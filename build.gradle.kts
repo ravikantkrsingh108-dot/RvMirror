@@ -13,9 +13,9 @@ buildscript {
     }
 
     dependencies {
-        classpath("com.android.tools.build:gradle:8.5.2")
+        classpath("com.android.tools.build:gradle:8.7.3") // UPGRADED AGP
         classpath("com.github.recloudstream.gradle:gradle:81b1d424d")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.20") // UPGRADED TO 2.0.20
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0") // UPGRADED TO 2.1.0
     }
 }
 
