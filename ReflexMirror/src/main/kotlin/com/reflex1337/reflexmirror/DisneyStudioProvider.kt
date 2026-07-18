@@ -114,12 +114,12 @@ open class DisneyStudioProvider(
         }
 
         if (data.episodes.first() == null) {
-            episodes.add(newEpisode(LoadData(title, id).toJson()) {
+            episodes.add(newEpisode(LoadData(title, id)) {
                 name = data.title
             })
         } else {
             data.episodes.filterNotNull().forEach { item ->
-                episodes.add(newEpisode(LoadData(title, item.id).toJson()) {
+                episodes.add(newEpisode(LoadData(title, item.id)) {
                     name = item.t
                     episode = item.ep.replace("E", "").toIntOrNull()
                     season = item.s.replace("S", "").toIntOrNull()
@@ -168,7 +168,7 @@ open class DisneyStudioProvider(
             ).parsed<EpisodesData>()
             
             data.episodes?.filterNotNull()?.forEach { item ->
-                episodes.add(newEpisode(LoadData(title, item.id).toJson()) {
+                episodes.add(newEpisode(LoadData(title, item.id)) {
                     name = item.t
                     episode = item.ep.replace("E", "").toIntOrNull()
                     season = item.s.replace("S", "").toIntOrNull()
