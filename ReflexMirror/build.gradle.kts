@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 4 // Bumped to 4 to force CloudStream to recognize the update
+version = 4
 
 android {
     namespace = "com.reflex1337.reflexmirror"
