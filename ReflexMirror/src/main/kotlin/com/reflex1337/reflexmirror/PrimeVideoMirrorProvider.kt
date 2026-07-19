@@ -14,7 +14,7 @@ import okhttp3.Response
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
-class PrimeVideoMirrorProvider : MainAPI() {
+class NetflixMirrorProvider : MainAPI() {
     companion object {
         var context: Context? = null
     }
@@ -25,10 +25,10 @@ class PrimeVideoMirrorProvider : MainAPI() {
         TvType.Anime,
         TvType.AsianDrama
     )
-    override var lang = "en"
+    override var lang = "ta"
 
     override var mainUrl = "https://net52.cc"
-    override var name = "Prime Video"
+    override var name = "Netflix"
 
     override val hasMainPage = true
     private var bypassResult: BypassResult? = null
@@ -40,7 +40,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
         }
         val cookies = mutableMapOf(
             "t_hash_t" to (bypassResult?.cookie ?: ""),
-            "ott" to "pv",
+            "ott" to "nf",
             "hd" to "on"
         )
         bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
@@ -59,7 +59,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
         val seenIds = document.select("article, .top10-post").mapNotNull {
             (it.selectFirst("a")?.attr("data-post")?.ifBlank { null }) ?: it.attr("data-post").ifBlank { null }
         }
-        NetflixMirrorStorage.addBareIds("pv", seenIds)
+        NetflixMirrorStorage.addBareIds("nf", seenIds)
 
         return newHomePageResponse(items, false)
     }
@@ -75,7 +75,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
     private fun Element.toSearchResult(): SearchResponse? {
         val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
         return newAnimeSearchResponse("", Id(id).toJson()) {
-            this.posterUrl = "https://imgcdn.kim/pv/v/$id.jpg"
+            this.posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
     }
@@ -86,18 +86,18 @@ class PrimeVideoMirrorProvider : MainAPI() {
         }
         val cookies = mutableMapOf(
             "t_hash_t" to (bypassResult?.cookie ?: ""),
-            "ott" to "pv",
+            "ott" to "nf",
             "hd" to "on"
         )
         bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
         bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { cookies["usertoken"] = it }
 
-        val url = "$mainUrl/mobile/pv/search.php?s=$query&t=${APIHolder.unixTime}"
+        val url = "$mainUrl/mobile/search.php?s=$query&t=${APIHolder.unixTime}"
         val data = app.get(url, referer = "$mainUrl/home", cookies = cookies).parsed<SearchData>()
 
         return data.searchResult.map {
             newAnimeSearchResponse(it.t, Id(it.id).toJson()) {
-                posterUrl = "https://imgcdn.kim/pv/v/${it.id}.jpg"
+                posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
                 posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
@@ -110,14 +110,14 @@ class PrimeVideoMirrorProvider : MainAPI() {
         val id = parseJson<Id>(url).id
         val cookies = mutableMapOf(
             "t_hash_t" to (bypassResult?.cookie ?: ""),
-            "ott" to "pv",
+            "ott" to "nf",
             "hd" to "on"
         )
         bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
         bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { cookies["usertoken"] = it }
 
         val data = app.get(
-            "$mainUrl/mobile/pv/post.php?id=$id&t=${APIHolder.unixTime}",
+            "$mainUrl/mobile/post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
             referer = "$mainUrl/home",
             cookies = cookies
@@ -141,18 +141,18 @@ class PrimeVideoMirrorProvider : MainAPI() {
 
         val suggest = data.suggest?.map {
             newAnimeSearchResponse("", Id(it.id).toJson()) {
-                this.posterUrl = "https://imgcdn.kim/pv/v/${it.id}.jpg"
+                this.posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
                 posterHeaders = mapOf("Referer" to "$mainUrl/home")
             }
         }
 
         NetflixMirrorStorage.addRich(
-            "pv", id,
+            "nf", id,
             if (data.episodes.first() == null) "m" else "s",
             genre ?: emptyList(),
             data.title
         )
-        NetflixMirrorStorage.addBareIds("pv", data.suggest?.mapNotNull { it.id } ?: emptyList())
+        NetflixMirrorStorage.addBareIds("nf", data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         if (data.episodes.first() == null) {
             episodes.add(newEpisode(LoadData(title, id)) {
@@ -164,7 +164,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
                     this.name = it.t
                     this.episode = it.ep.replace("E", "").toIntOrNull()
                     this.season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/pvepimg/${it.id}.jpg"
+                    this.posterUrl = "https://imgcdn.kim/poster/v/150/${it.id}.jpg"
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -181,8 +181,8 @@ class PrimeVideoMirrorProvider : MainAPI() {
         val type = if (data.episodes.first() == null) TvType.Movie else TvType.TvSeries
 
         return newTvSeriesLoadResponse(title, url, type, episodes) {
-            posterUrl = "https://imgcdn.kim/pv/v/$id.jpg"
-            backgroundPosterUrl = "https://imgcdn.kim/pv/h/$id.jpg"
+            posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
+            backgroundPosterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
             plot = data.desc
             year = data.year.toIntOrNull()
@@ -201,7 +201,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
         val episodes = arrayListOf<Episode>()
         val cookies = mutableMapOf(
             "t_hash_t" to (bypassResult?.cookie ?: ""),
-            "ott" to "pv",
+            "ott" to "nf",
             "hd" to "on"
         )
         bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { cookies["addhash"] = it }
@@ -210,7 +210,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
         var pg = page
         while (true) {
             val data = app.get(
-                "$mainUrl/mobile/pv/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
+                "$mainUrl/mobile/episodes.php?s=$sid&series=$eid&t=${APIHolder.unixTime}&page=$pg",
                 headers,
                 referer = "$mainUrl/home",
                 cookies = cookies
@@ -220,7 +220,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
                     name = it.t
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/pvepimg/${it.id}.jpg"
+                    this.posterUrl = "https://imgcdn.kim/epimg/150/${it.id}.jpg"
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -236,11 +236,41 @@ class PrimeVideoMirrorProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val ld = parseJson<LoadData>(data)
+        
+        // 1. Try fetching directly from playlist.php
+        val result = try {
+            getPlaylistLink(mainUrl, bypassResult, ld.id, "nf", "playlist.php")
+        } catch (_: Exception) { null }
+
+        if (result != null) {
+            val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
+            if (source != null) {
+                val url = source.file!!
+                val fullUrl = if (url.startsWith("http")) url else "$mainUrl$url"
+                callback.invoke(
+                    newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
+                        this.referer = mainUrl
+                    }
+                )
+            }
+            // Fetch subtitles
+            result.tracks?.forEach { track ->
+                val url = track.file ?: return@forEach
+                val label = track.label ?: "Unknown"
+                val kind = track.kind ?: ""
+                if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
+                    subtitleCallback.invoke(SubtitleFile(label, url))
+                }
+            }
+            return true
+        }
+
+        // 2. Fallback to NewTV API if playlist.php fails
         val apiBase = resolveApiUrl()
-        val id = parseJson<LoadData>(data).id
         val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
-            headers = buildNewTvHeaders("pv", mapOf("Usertoken" to ""))
+            "$apiBase/newtv/player.php?id=${ld.id}",
+            headers = buildNewTvHeaders("nf", mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
 
         if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
@@ -250,7 +280,6 @@ class PrimeVideoMirrorProvider : MainAPI() {
                 this.referer = response.referer ?: apiBase
             }
         )
-
         return true
     }
 
@@ -262,7 +291,7 @@ class PrimeVideoMirrorProvider : MainAPI() {
                 val urlStr = request.url.toString()
                 if (urlStr.contains(".m3u8") || urlStr.contains(".ts") || urlStr.contains(".jpg")) {
                     val bypass = bypassResult
-                    val cookieParts = mutableListOf("t_hash_t=${bypass?.cookie ?: ""}", "hd=on", "ott=pv")
+                    val cookieParts = mutableListOf("t_hash_t=${bypass?.cookie ?: ""}", "hd=on", "ott=nf")
                     if (bypass != null && bypass.addhash.isNotEmpty()) cookieParts.add("addhash=${bypass.addhash}")
                     if (bypass != null && bypass.usertoken.isNotEmpty()) cookieParts.add("usertoken=${bypass.usertoken}")
 
