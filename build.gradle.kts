@@ -52,7 +52,6 @@ subprojects {
         setRepo(System.getenv("GITHUB_REPOSITORY") 
             ?: "https://github.com/Reflex755/ReflexRepo")
         authors = listOf("Reflex1337")
-        useJsDelivr = false // ADDED THIS TO BYPASS JSDELIVR CACHE
     }
 
     android {
