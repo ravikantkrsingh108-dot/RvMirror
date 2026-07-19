@@ -104,7 +104,7 @@ class HotStarMirrorProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
             bypassResult = bypass(mainUrl)
         }
         val id = parseJson<Id>(url).id
