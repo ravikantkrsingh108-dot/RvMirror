@@ -238,7 +238,6 @@ class NetflixMirrorProvider : MainAPI() {
     ): Boolean {
         val ld = parseJson<LoadData>(data)
         
-        // 1. Try fetching directly from playlist.php
         val result = try {
             getPlaylistLink(mainUrl, bypassResult, ld.id, "nf", "playlist.php")
         } catch (_: Exception) { null }
@@ -254,7 +253,6 @@ class NetflixMirrorProvider : MainAPI() {
                     }
                 )
             }
-            // Fetch subtitles
             result.tracks?.forEach { track ->
                 val url = track.file ?: return@forEach
                 val label = track.label ?: "Unknown"
@@ -266,17 +264,19 @@ class NetflixMirrorProvider : MainAPI() {
             return true
         }
 
-        // 2. Fallback to NewTV API if playlist.php fails
         val apiBase = resolveApiUrl()
-        val response = app.get(
+        if (apiBase.isBlank()) return false
+
+        val text = app.get(
             "$apiBase/newtv/player.php?id=${ld.id}",
             headers = buildNewTvHeaders("nf", mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+        ).text
+        val response = tryParseJson<NewTvPlayerResponse>(text)
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        if (response?.video_link.isNullOrBlank()) return false
 
         callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
+            newExtractorLink(name, name, response!!.video_link!!, type = ExtractorLinkType.M3U8) {
                 this.referer = response.referer ?: apiBase
             }
         )
