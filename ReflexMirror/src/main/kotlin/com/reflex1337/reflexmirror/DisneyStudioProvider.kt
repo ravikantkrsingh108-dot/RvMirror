@@ -51,7 +51,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
             bypassResult = bypass(mainUrl)
         }
         
@@ -85,7 +85,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
             bypassResult = bypass(mainUrl)
         }
         
@@ -217,15 +217,18 @@ open class DisneyStudioProvider(
         }
 
         val apiBase = resolveApiUrl()
-        val response = app.get(
+        if (apiBase.isBlank()) return false
+
+        val text = app.get(
             "$apiBase/newtv/player.php?id=${ld.id}",
             headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+        ).text
+        val response = tryParseJson<NewTvPlayerResponse>(text)
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        if (response?.video_link.isNullOrBlank()) return false
 
         callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
+            newExtractorLink(name, name, response!!.video_link!!, type = ExtractorLinkType.M3U8) {
                 referer = response.referer ?: apiBase
             }
         )
