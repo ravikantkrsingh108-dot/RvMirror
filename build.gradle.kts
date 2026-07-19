@@ -13,9 +13,9 @@ buildscript {
     }
 
     dependencies {
-        classpath("com.android.tools.build:gradle:8.5.2")
+        classpath("com.android.tools.build:gradle:8.7.3")
         classpath("com.github.recloudstream.gradle:gradle:81b1d424d")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24") // REVERTED TO 1.9.24
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.20")
     }
 }
 
@@ -27,6 +27,7 @@ allprojects {
     }
 }
 
+// Extension helper functions using the modern LibraryExtension API
 fun Project.cloudstream(configuration: CloudstreamExtension.() -> Unit) = 
     extensions.getByName<CloudstreamExtension>("cloudstream").configuration()
 
@@ -47,6 +48,7 @@ subprojects {
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
+        // Fallback cascade: GitHub Actions
         setRepo(System.getenv("GITHUB_REPOSITORY") 
             ?: "https://github.com/Reflex755/ReflexRepo")
         authors = listOf("Reflex1337")
@@ -54,10 +56,15 @@ subprojects {
 
     android {
         namespace = "com.reflex1337" 
-        compileSdk = 34
+        compileSdk = 35
 
         defaultConfig {
             minSdk = 21
+            testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        }
+
+        lint {
+            targetSdk = 35
         }
 
         compileOptions {
@@ -67,24 +74,47 @@ subprojects {
 
         tasks.withType<KotlinJvmCompile> {
             compilerOptions {
-                jvmTarget.set(JvmTarget.JVM_1_8)
-                // Removed -Xskip-metadata-version-check
+                jvmTarget.set(JvmTarget.JVM_1_8) // Required for Cloudstream runtime compatibility
+                freeCompilerArgs.addAll(
+                    "-Xno-call-assertions",
+                    "-Xno-param-assertions",
+                    "-Xno-receiver-assertions",
+                    "-Xskip-metadata-version-check"
+                )
             }
         }
     }
 
     dependencies {
+        val implementation by configurations
         val cloudstream by configurations
-        val coreLibraryDesugaring by configurations
-        
+
         // Cloudstream compilation stubs
         cloudstream("com.lagradost:cloudstream3:pre-release")
-        
-        // REQUIRED FOR KOTLIN 2.0+ - Prevents D8 metadata crashes
-        coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.2")
+
+        // Core / Network / Parsing
+        implementation(kotlin("stdlib"))
+        implementation("com.github.Blatzar:NiceHttp:0.4.18")
+        implementation("org.jsoup:jsoup:1.22.2")
+
+        // CRITICAL: Do not bump Jackson above 2.13.1 (Breaks older Android devices)
+        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.1")
+        implementation("com.fasterxml.jackson.core:jackson-databind:2.13.1")
+
+        // Utilities & Quality of Life
+        implementation("androidx.annotation:annotation:1.10.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+        implementation("me.xdrop:fuzzywuzzy:1.4.0")
+        implementation("com.google.code.gson:gson:2.14.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+
+        // Crypto & JS Engines (Do not bump Rhino past 1.8.1)
+        implementation("org.mozilla:rhino:1.8.1")
+        implementation("org.bouncycastle:bcpkix-jdk18on:1.84")
     }
 }
 
+// Clean task updated to use modern register API
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
