@@ -188,10 +188,37 @@ open class DisneyStudioProvider(
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val ld = parseJson<LoadData>(data)
+        
+        val result = try {
+            getPlaylistLink(mainUrl, bypassResult, ld.id, "dp", "hs/playlist.php")
+        } catch (_: Exception) { null }
+
+        if (result != null) {
+            val source = result.sources.firstOrNull { !it.file.isNullOrBlank() }
+            if (source != null) {
+                val url = source.file!!
+                val fullUrl = if (url.startsWith("http")) url else "$mainUrl$url"
+                callback.invoke(
+                    newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
+                        this.referer = mainUrl
+                    }
+                )
+            }
+            result.tracks?.forEach { track ->
+                val url = track.file ?: return@forEach
+                val label = track.label ?: "Unknown"
+                val kind = track.kind ?: ""
+                if (kind == "captions" || url.endsWith(".srt") || url.endsWith(".vtt")) {
+                    subtitleCallback.invoke(SubtitleFile(label, url))
+                }
+            }
+            return true
+        }
+
         val apiBase = resolveApiUrl()
-        val id = parseJson<LoadData>(data).id
         val response = app.get(
-            "$apiBase/newtv/player.php?id=$id",
+            "$apiBase/newtv/player.php?id=${ld.id}",
             headers = buildNewTvHeaders("hs", mapOf("Usertoken" to ""))
         ).parsed<NewTvPlayerResponse>()
 
@@ -202,7 +229,6 @@ open class DisneyStudioProvider(
                 referer = response.referer ?: apiBase
             }
         )
-
         return true
     }
 
