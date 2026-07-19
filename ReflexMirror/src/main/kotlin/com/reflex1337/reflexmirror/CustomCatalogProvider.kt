@@ -165,7 +165,7 @@ class CustomCatalogProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
             bypassResult = bypass(mainUrl)
         }
         val q = query.trim()
@@ -204,7 +204,7 @@ class CustomCatalogProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
             bypassResult = bypass(mainUrl)
         }
         val ref = parseJson<Ref>(url)
@@ -328,7 +328,7 @@ class CustomCatalogProvider : MainAPI() {
         enriching = true
         enrichScope.launch {
             try {
-                if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
+                if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
                     bypassResult = bypass(mainUrl)
                 }
                 for (o in otts) {
