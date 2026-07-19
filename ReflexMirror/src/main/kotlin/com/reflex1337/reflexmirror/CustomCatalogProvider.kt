@@ -165,7 +165,7 @@ class CustomCatalogProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
             bypassResult = bypass(mainUrl)
         }
         val q = query.trim()
@@ -204,7 +204,7 @@ class CustomCatalogProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
             bypassResult = bypass(mainUrl)
         }
         val ref = parseJson<Ref>(url)
@@ -328,7 +328,7 @@ class CustomCatalogProvider : MainAPI() {
         enriching = true
         enrichScope.launch {
             try {
-                if (bypassResult == null || bypassResult?.cookie.isNullOrEmpty()) {
+                if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
                     bypassResult = bypass(mainUrl)
                 }
                 for (o in otts) {
@@ -438,15 +438,18 @@ class CustomCatalogProvider : MainAPI() {
         }
 
         val apiBase = resolveApiUrl()
-        val response = app.get(
+        if (apiBase.isBlank()) return false
+
+        val text = app.get(
             "$apiBase/newtv/player.php?id=${ld.id}",
             headers = buildNewTvHeaders(ld.ott, mapOf("Usertoken" to ""))
-        ).parsed<NewTvPlayerResponse>()
+        ).text
+        val response = tryParseJson<NewTvPlayerResponse>(text)
 
-        if (response.status != "ok" || response.video_link.isNullOrBlank()) return false
+        if (response?.video_link.isNullOrBlank()) return false
 
         callback.invoke(
-            newExtractorLink(name, name, response.video_link, type = ExtractorLinkType.M3U8) {
+            newExtractorLink(name, name, response!!.video_link!!, type = ExtractorLinkType.M3U8) {
                 this.referer = response.referer ?: apiBase
             }
         )
