@@ -1,14 +1,17 @@
 // use an integer for version numbers
-version = 9 // Bumped to 9 to force CloudStream to recognize the update
+version = 10 // Bumped to 10
 
 android {
-    namespace = "com.reflex1337.reflexmirror" // CRITICAL: This must be here!
     buildFeatures {
         buildConfig = true
     }
 }
 
-// Do NOT add any implementation dependencies here! It breaks the .cs3 file.
+dependencies {
+    implementation("androidx.core:core:1.16.0")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+}
 
 cloudstream {
     language = "en"
