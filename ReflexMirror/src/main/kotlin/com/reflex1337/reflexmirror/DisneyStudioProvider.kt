@@ -51,7 +51,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
             bypassResult = bypass(mainUrl)
         }
         
@@ -85,7 +85,7 @@ open class DisneyStudioProvider(
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        if (bypassResult == null || bypassResult?.cookie.isEmpty()) {
+        if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
             bypassResult = bypass(mainUrl)
         }
         
