@@ -105,7 +105,6 @@ suspend fun bypass(mainUrl: String): BypassResult {
         return cached
     }
 
-    // Step 1: GET homepage to get cookie and check for ad wall
     val homeResp = app.get(
         "$mainUrl/mobile/home?app=1",
         headers = BROWSER_HEADERS,
@@ -121,7 +120,6 @@ suspend fun bypass(mainUrl: String): BypassResult {
         cookie = homeResp.cookies["t_hash_t"] ?: ""
     }
 
-    // Fallback to verify.php if homepage didn't give cookie
     if (cookie.isEmpty()) {
         try {
             val client = app.baseClient.newBuilder()
@@ -153,7 +151,6 @@ suspend fun bypass(mainUrl: String): BypassResult {
     val doc = homeResp.document
     val html = doc.html()
 
-    // Check if there's NO ad wall
     if (!html.contains("We Need Support") || !html.contains("open-support")) {
         val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
         val result = BypassResult(cookie, "", "", dataTime)
@@ -163,7 +160,6 @@ suspend fun bypass(mainUrl: String): BypassResult {
         return result
     }
 
-    // Ad wall exists - extract addhash
     val addhash = doc.selectFirst("body")?.attr("data-addhash") ?: ""
     val dataTime = doc.selectFirst("body")?.attr("data-time") ?: ""
 
@@ -174,20 +170,16 @@ suspend fun bypass(mainUrl: String): BypassResult {
         return result
     }
 
-    // Extract Qury and Vsite2 from page JavaScript
     val qury = Regex("""Qury\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "ffr455"
     val vsite = Regex("""Vsite2\s*=\s*"([^"]+)"""").find(html)?.groupValues?.get(1) ?: "userver"
 
-    // Simulate ad click
     val adClickUrl = "https://$vsite.net52.cc/?$qury=$addhash&a=y&t=${Math.random()}"
     try {
         app.get(adClickUrl, headers = BROWSER_HEADERS, referer = "$mainUrl/mobile/home?app=1")
     } catch (_: Exception) {}
 
-    // Wait for ad to "complete" (25 seconds)
     kotlinx.coroutines.delay(25000L)
 
-    // Step 4: POST to verify2.php with addhash to confirm ad was watched
     var usertoken = ""
     var finalCookie = cookie
     for (attempt in 1..10) {
@@ -275,11 +267,9 @@ suspend fun resolveApiUrl(): String {
                 resolvedApiUrl = decodeBase64(tokenHash).trimEnd('/')
                 return resolvedApiUrl
             }
-        } catch (_: Exception) {
-            // Try next domain.
-        }
+        } catch (_: Exception) {}
     }
-    throw Exception("Failed to resolve NewTV API base URL")
+    return "" // Return empty string instead of throwing an error
 }
 
 fun buildNewTvHeaders(ott: String, extra: Map<String, String> = emptyMap()): Map<String, String> {
@@ -326,7 +316,6 @@ suspend fun getPlaylistLink(mainUrl: String, bypass: BypassResult?, id: String, 
         cookies = cookies
     ).text
 
-    // Try JSON array format: [{"sources":[...],"tracks":[...]}]
     try {
         val playlist = tryParseJson<List<PlayListItem>>(response)
         val item = playlist?.firstOrNull()
@@ -335,7 +324,6 @@ suspend fun getPlaylistLink(mainUrl: String, bypass: BypassResult?, id: String, 
         }
     } catch (_: Exception) {}
 
-    // Try single object
     try {
         val item = tryParseJson<PlayListItem>(response)
         if (item != null && !item.sources.isNullOrEmpty()) {
@@ -343,8 +331,8 @@ suspend fun getPlaylistLink(mainUrl: String, bypass: BypassResult?, id: String, 
         }
     } catch (_: Exception) {}
 
-    // Regex fallback for m3u8
-    val m3u8 = Regex("""(/mobile/hls/[^\s"']+\.m3u8[^\s"']*)""").find(response)?.groupValues?.get(1)
+    // Broader Regex to catch /mobile/hls/, /mobile/pv/hls/, /mobile/hs/hls/ etc.
+    val m3u8 = Regex("""(/mobile/[a-zA-Z0-9_/-]+\.m3u8[^\s"']*)""").find(response)?.groupValues?.get(1)
     if (!m3u8.isNullOrBlank()) {
         return PlaylistResult(listOf(Source("$mainUrl$m3u8", "Auto", "m3u8")), null)
     }
