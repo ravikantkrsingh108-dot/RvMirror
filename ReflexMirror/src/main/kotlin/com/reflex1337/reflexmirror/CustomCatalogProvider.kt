@@ -20,9 +20,9 @@ import kotlinx.coroutines.delay
 class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
-        private const val MIN_ROW_SIZE = 5
-        private const val MAX_ROWS_PER_TAB = 20
-        private const val MAX_ITEMS_PER_ROW = 80
+        private const val MIN_ROW_SIZE = 20
+        private const val MAX_ROWS_PER_TAB = 30
+        private const val MAX_ITEMS_PER_ROW = 500
         private const val CRAWLER_BATCH_SIZE = 5
     }
 
@@ -50,10 +50,7 @@ class CustomCatalogProvider : MainAPI() {
     private val headers = BROWSER_HEADERS
 
     private val genreBlacklist = setOf(
-        "tv shows", "movies", "watch it again", "trending now", "top 10", 
-        "new on netflix", "new on prime video", "new on hotstar", "international", 
-        "indian", "korean", "us", "uk", "audio", "specials", "documentaries", 
-        "reality tv", "anime", "tv", "film", "series", "featured", "popular"
+        "international", "indian", "korean", "us", "uk", "audio"
     )
 
     // Only show these languages in the By Language tab
