@@ -15,15 +15,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
-        private const val MIN_ROW_SIZE = 5 // Require at least 5 items to make a row
-        private const val MAX_ROWS_PER_TAB = 25 // Max rows to show
-        private const val MAX_ITEMS_PER_ROW = 80 // Max items in a single row for performance
-        private const val ENRICH_CONCURRENCY = 10
-        private const val PERSIST_EVERY = 100
+        private const val MIN_ROW_SIZE = 5
+        private const val MAX_ROWS_PER_TAB = 20
+        private const val MAX_ITEMS_PER_ROW = 80
+        private const val CRAWLER_BATCH_SIZE = 5
     }
 
     override val supportedTypes = setOf(
@@ -44,12 +44,11 @@ class CustomCatalogProvider : MainAPI() {
     )
 
     private var bypassResult: BypassResult? = null
-    private val enrichScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    @Volatile private var enriching = false
+    private val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @Volatile private var crawling = false
 
     private val headers = BROWSER_HEADERS
 
-    // Fake genres that NetMirror uses which clutter the UI
     private val genreBlacklist = setOf(
         "tv shows", "movies", "watch it again", "trending now", "top 10", 
         "new on netflix", "new on prime video", "new on hotstar", "international", 
@@ -111,7 +110,7 @@ class CustomCatalogProvider : MainAPI() {
         }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        kickEnrichment()
+        kickCrawler() // Start the smart crawler
         val rows = when (request.data) {
             "lang" -> languageRows()
             "year" -> yearRows()
@@ -127,7 +126,6 @@ class CustomCatalogProvider : MainAPI() {
         val allSeries = ArrayList<SearchResponse>()
         val recentItems = mutableListOf<Pair<Long, SearchResponse>>()
 
-        // Single pass to categorize everything
         for (o in otts) {
             val m = NetflixMirrorStorage.getAll(o.code).toMutableMap()
             if (o.code == "nf") {
@@ -141,8 +139,6 @@ class CustomCatalogProvider : MainAPI() {
 
             m.forEach { (id, rec) ->
                 val c = card(o, id, rec.n)
-                
-                // For Recently Added (only if we know the title)
                 if (rec.n.isNotEmpty()) {
                     recentItems.add(Pair(rec.ts, c))
                 }
@@ -152,7 +148,6 @@ class CustomCatalogProvider : MainAPI() {
                     "s" -> { allSeries.add(c); ottSeries.add(c) }
                 }
                 
-                // Filter out fake genres and categorize
                 rec.g.forEach { genre ->
                     val cleanGenre = genre.lowercase().trim()
                     if (cleanGenre.isNotEmpty() && cleanGenre !in genreBlacklist && cleanGenre.length > 2) {
@@ -162,7 +157,6 @@ class CustomCatalogProvider : MainAPI() {
                 }
             }
 
-            // Add per-OTT rows
             if (ottMovies.size >= MIN_ROW_SIZE) {
                 rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled().take(MAX_ITEMS_PER_ROW)))
             }
@@ -171,13 +165,11 @@ class CustomCatalogProvider : MainAPI() {
             }
         }
 
-        // 1. Add Recently Added (Sort by timestamp descending)
         val recent = recentItems.sortedByDescending { it.first }.map { it.second }.take(MAX_ITEMS_PER_ROW)
         if (recent.size >= MIN_ROW_SIZE) {
             rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
         }
 
-        // 2. Add Global Rows
         if (allMovies.isNotEmpty()) {
             rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled().take(MAX_ITEMS_PER_ROW)))
         }
@@ -185,7 +177,6 @@ class CustomCatalogProvider : MainAPI() {
             rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled().take(MAX_ITEMS_PER_ROW)))
         }
 
-        // 3. Add Clean Genre Rows
         genreBuckets.entries
             .filter { it.value.size >= MIN_ROW_SIZE }
             .sortedByDescending { it.value.size }
@@ -202,7 +193,6 @@ class CustomCatalogProvider : MainAPI() {
         allRecords().forEach { (o, id, rec) ->
             rec.l.forEach { lang ->
                 val cleanLang = lang.lowercase().trim()
-                // ONLY show allowed languages to keep the UI clean
                 if (cleanLang in allowedLanguages) {
                     val properLang = lang.trim().replaceFirstChar { it.uppercase() }
                     byLang.getOrPut(properLang) { ArrayList() }.add(card(o, id, rec.n))
@@ -218,15 +208,14 @@ class CustomCatalogProvider : MainAPI() {
     private fun yearRows(): List<HomePageList> {
         val byDecade = LinkedHashMap<String, MutableList<SearchResponse>>()
         allRecords().forEach { (o, id, rec) ->
-            // Only accept valid 4-digit years
             val yearInt = rec.y.toIntOrNull()
             if (yearInt != null && yearInt > 1950) {
-                val decade = "${yearInt / 10}0s" // e.g., 2020s, 2010s
+                val decade = "${yearInt / 10}0s"
                 byDecade.getOrPut(decade) { ArrayList() }.add(card(o, id, rec.n))
             }
         }
         return byDecade.entries
-            .filter { it.value.size >= 3 } // Lower threshold for decades
+            .filter { it.value.size >= 3 }
             .sortedByDescending { it.key }
             .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled().take(MAX_ITEMS_PER_ROW)) }
     }
@@ -390,50 +379,93 @@ class CustomCatalogProvider : MainAPI() {
         else -> "🌐"
     }
 
-    private fun kickEnrichment() {
-        if (enriching) return
-        enriching = true
-        enrichScope.launch {
+    // --- SMART SUGGESTION GRAPH CRAWLER ---
+    private fun kickCrawler() {
+        if (crawling) return
+        crawling = true
+        crawlerScope.launch {
             try {
                 if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
                     bypassResult = bypass(mainUrl)
                 }
-                for (o in otts) {
-                    val bare = NetflixMirrorStorage.getAll(o.code)
-                        .filterValues { it.t == "?" }
-                        .keys.toList()
-                    if (bare.isEmpty()) continue
 
-                    val buffer = HashMap<String, CatalogRecord>()
-                    for (chunk in bare.chunked(ENRICH_CONCURRENCY)) {
-                        chunk.amap { id -> id to fetchRecord(o, id) }
-                            .forEach { (id, rec) -> if (rec != null) buffer[id] = rec }
-                        if (buffer.size >= PERSIST_EVERY) {
-                            NetflixMirrorStorage.addRichBatch(o.code, HashMap(buffer))
-                            buffer.clear()
+                var frontier = NetflixMirrorStorage.getCrawlerFrontier()
+                var visited = NetflixMirrorStorage.getCrawlerVisited()
+
+                // 1. Seed the frontier if it's empty
+                if (frontier.isEmpty()) {
+                    val seedTerms = ('a'..'z').map { it.toString() } + ('0'..'9').map { it.toString() }
+                    seedTerms.forEach { term ->
+                        otts.forEach { o ->
+                            try {
+                                val results = app.get(
+                                    "$mainUrl/mobile/${o.path}search.php?s=$term&t=${APIHolder.unixTime}",
+                                    referer = "$mainUrl/home",
+                    cookies = cookies(o.code)
+                                ).parsed<SearchData>().searchResult
+
+                                results.forEach { r ->
+                                    val item = "${o.code}|${r.id}"
+                                    if (!visited.contains(item)) {
+                                        visited.add(item)
+                                        frontier.add(item)
+                                    }
+                                }
+                            } catch (e: Exception) {}
+                            delay(1500) // 1.5s delay per search to prevent IP ban
                         }
                     }
-                    if (buffer.isNotEmpty()) NetflixMirrorStorage.addRichBatch(o.code, buffer)
+                    NetflixMirrorStorage.saveCrawlerVisited(visited)
+                    NetflixMirrorStorage.saveCrawlerFrontier(frontier)
+                }
+
+                // 2. Process the frontier (BFS over suggestions)
+                while (frontier.isNotEmpty()) {
+                    val batch = frontier.take(CRAWLER_BATCH_SIZE).toMutableList()
+                    frontier.removeAll(batch)
+
+                    batch.map { item ->
+                        val parts = item.split("|")
+                        if (parts.size == 2) {
+                            val o = ottOf(parts[0])
+                            val id = parts[1]
+                            try {
+                                val data = app.get(
+                                    "$mainUrl/mobile/${o.path}post.php?id=$id&t=${APIHolder.unixTime}",
+                                    headers,
+                                    referer = "$mainUrl/home",
+                                    cookies = cookies(o.code)
+                                ).parsed<PostData>()
+
+                                val type = if (data.episodes.first() == null) "m" else "s"
+                                val genres = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+                                val langs = languagesOf(data)
+                                
+                                NetflixMirrorStorage.addRich(o.code, id, type, genres, data.title.trim(), data.year.trim(), langs)
+
+                                // Add suggestions to frontier
+                                data.suggest?.forEach { s ->
+                                    val sItem = "${o.code}|${s.id}"
+                                    if (!visited.contains(sItem)) {
+                                        visited.add(sItem)
+                                        frontier.add(sItem)
+                                    }
+                                }
+                            } catch (e: Exception) {}
+                        }
+                    }
+
+                    // Save state so it survives app restarts
+                    NetflixMirrorStorage.saveCrawlerFrontier(frontier)
+                    NetflixMirrorStorage.saveCrawlerVisited(visited)
+
+                    delay(2000) // 2s delay per batch to prevent IP ban
                 }
             } catch (_: Exception) {
             } finally {
-                enriching = false
+                crawling = false
             }
         }
-    }
-
-    private suspend fun fetchRecord(o: Ott, id: String): CatalogRecord? = try {
-        val data = app.get(
-            "$mainUrl/mobile/${o.path}post.php?id=$id&t=${APIHolder.unixTime}",
-            headers,
-            referer = "$mainUrl/home",
-            cookies = cookies(o.code)
-        ).parsed<PostData>()
-        val type = if (data.episodes.first() == null) "m" else "s"
-        val genres = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
-        CatalogRecord(type, genres, data.title.trim(), data.year.trim(), languagesOf(data))
-    } catch (e: Exception) {
-        null
     }
 
     private suspend fun getEpisodes(
