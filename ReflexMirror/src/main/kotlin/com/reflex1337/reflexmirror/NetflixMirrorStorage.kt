@@ -33,12 +33,6 @@ object NetflixMirrorStorage {
         editor.apply()
     }
 
-    /**
-     * Passive catalog collection. Per ott ("nf", "pv", "hs") we keep a map of
-     * id -> {type, genres}. Bare ids (seen on home/suggestions) start as type "?"
-     * and get upgraded to "m"/"s" with genres the first time a title is opened.
-     * The Custom Catalog reads this to build grouped, genre-tagged rows.
-     */
     private val cache = HashMap<String, MutableMap<String, CatalogRecord>>()
 
     @Synchronized
@@ -65,7 +59,6 @@ object NetflixMirrorStorage {
         prefs.edit().putString("catalog_$ott", JSONParser.writeValueAsString(CatalogStore(map))).apply()
     }
 
-    /** Record ids of unknown type (home cards, suggestions). Never downgrades a rich record. */
     @Synchronized
     fun addBareIds(ott: String, ids: Collection<String>) {
         val map = loadOtt(ott)
@@ -80,7 +73,6 @@ object NetflixMirrorStorage {
         if (changed) persist(ott)
     }
 
-    /** Upsert a title's metadata. Empty fields keep any previously stored value (no clobber). */
     @Synchronized
     fun addRich(
         ott: String,
@@ -100,12 +92,12 @@ object NetflixMirrorStorage {
             g = if (genres.isNotEmpty()) genres else (prev?.g ?: emptyList()),
             n = title.trim().ifEmpty { prev?.n ?: "" },
             y = year.trim().ifEmpty { prev?.y ?: "" },
-            l = if (languages.isNotEmpty()) languages else (prev?.l ?: emptyList())
+            l = if (languages.isNotEmpty()) languages else (prev?.l ?: emptyList()),
+            ts = System.currentTimeMillis()
         )
         persist(ott)
     }
 
-    /** Upsert many records at once, persisting only once (used by background enrichment). */
     @Synchronized
     fun addRichBatch(ott: String, records: Map<String, CatalogRecord>) {
         if (records.isEmpty()) return
@@ -116,6 +108,28 @@ object NetflixMirrorStorage {
 
     @Synchronized
     fun getAll(ott: String): Map<String, CatalogRecord> = HashMap(loadOtt(ott))
+
+    // --- CRAWLER PERSISTENCE ---
+
+    fun getCrawlerFrontier(): MutableList<String> {
+        val json = if (::prefs.isInitialized) prefs.getString("crawler_frontier", null) else null
+        return if (json.isNullOrBlank()) mutableListOf() else try { JSONParser.parse(json, List::class).toMutableList() } catch(e: Exception) { mutableListOf() }
+    }
+
+    fun saveCrawlerFrontier(list: List<String>) {
+        if (!::prefs.isInitialized) return
+        prefs.edit().putString("crawler_frontier", JSONParser.writeValueAsString(list)).apply()
+    }
+
+    fun getCrawlerVisited(): MutableSet<String> {
+        val json = if (::prefs.isInitialized) prefs.getString("crawler_visited", null) else null
+        return if (json.isNullOrBlank()) mutableSetOf() else try { JSONParser.parse(json, Set::class).toMutableSet() } catch(e: Exception) { mutableSetOf() }
+    }
+
+    fun saveCrawlerVisited(set: Set<String>) {
+        if (!::prefs.isInitialized) return
+        prefs.edit().putString("crawler_visited", JSONParser.writeValueAsString(set)).apply()
+    }
 }
 
 data class CatalogRecord(
