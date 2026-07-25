@@ -21,7 +21,7 @@ class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
         private const val MIN_ROW_SIZE = 20
-        private const val MAX_ROWS_PER_TAB = 30
+        private const val MAX_ROWS_PER_TAB = 50
         private const val MAX_ITEMS_PER_ROW = 500
         private const val CRAWLER_BATCH_SIZE = 5
     }
@@ -155,10 +155,10 @@ class CustomCatalogProvider : MainAPI() {
             }
 
             if (ottMovies.size >= MIN_ROW_SIZE) {
-                rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled().take(MAX_ITEMS_PER_ROW)))
+                rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled()))
             }
             if (ottSeries.size >= MIN_ROW_SIZE) {
-                rows.add(HomePageList("${o.emoji} ${o.label} Series (${ottSeries.size})", ottSeries.shuffled().take(MAX_ITEMS_PER_ROW)))
+                rows.add(HomePageList("${o.emoji} ${o.label} Series (${ottSeries.size})", ottSeries.shuffled()))
             }
         }
 
@@ -168,10 +168,10 @@ class CustomCatalogProvider : MainAPI() {
         }
 
         if (allMovies.isNotEmpty()) {
-            rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled().take(MAX_ITEMS_PER_ROW)))
+            rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled()))
         }
         if (allSeries.isNotEmpty()) {
-            rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled().take(MAX_ITEMS_PER_ROW)))
+            rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled()))
         }
 
         genreBuckets.entries
@@ -179,7 +179,7 @@ class CustomCatalogProvider : MainAPI() {
             .sortedByDescending { it.value.size }
             .take(MAX_ROWS_PER_TAB)
             .forEach { (genre, items) ->
-                rows.add(HomePageList("🎭 $genre (${items.size})", items.shuffled().take(MAX_ITEMS_PER_ROW)))
+                rows.add(HomePageList("🎭 $genre (${items.size})", items.shuffled()))
             }
 
         return rows
@@ -199,7 +199,7 @@ class CustomCatalogProvider : MainAPI() {
         return byLang.entries
             .filter { it.value.size >= MIN_ROW_SIZE }
             .sortedByDescending { it.value.size }
-            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled().take(MAX_ITEMS_PER_ROW)) }
+            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled()) }
     }
 
     private fun yearRows(): List<HomePageList> {
@@ -214,7 +214,7 @@ class CustomCatalogProvider : MainAPI() {
         return byDecade.entries
             .filter { it.value.size >= 3 }
             .sortedByDescending { it.key }
-            .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled().take(MAX_ITEMS_PER_ROW)) }
+            .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled()) }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
