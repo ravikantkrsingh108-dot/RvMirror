@@ -19,7 +19,9 @@ import kotlinx.coroutines.launch
 class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
-        private const val MIN_GENRE_SIZE = 1
+        private const val MIN_ROW_SIZE = 5 // Require at least 5 items to make a row
+        private const val MAX_ROWS_PER_TAB = 25 // Max rows to show
+        private const val MAX_ITEMS_PER_ROW = 80 // Max items in a single row for performance
         private const val ENRICH_CONCURRENCY = 10
         private const val PERSIST_EVERY = 100
     }
@@ -36,7 +38,7 @@ class CustomCatalogProvider : MainAPI() {
     override val hasMainPage = true
 
     override val mainPage = mainPageOf(
-        "all" to "Catalog",
+        "all" to "Smart Catalog",
         "lang" to "By Language",
         "year" to "By Year"
     )
@@ -47,19 +49,33 @@ class CustomCatalogProvider : MainAPI() {
 
     private val headers = BROWSER_HEADERS
 
+    // Fake genres that NetMirror uses which clutter the UI
+    private val genreBlacklist = setOf(
+        "tv shows", "movies", "watch it again", "trending now", "top 10", 
+        "new on netflix", "new on prime video", "new on hotstar", "international", 
+        "indian", "korean", "us", "uk", "audio", "specials", "documentaries", 
+        "reality tv", "anime", "tv", "film", "series", "featured", "popular"
+    )
+
+    // Only show these languages in the By Language tab
+    private val allowedLanguages = setOf(
+        "hindi", "english"
+    )
+
     private data class Ott(
         val code: String,
         val label: String,
         val path: String,
         val poster: String,
         val backdrop: String,
-        val epDir: String
+        val epDir: String,
+        val emoji: String
     )
 
     private val otts = listOf(
-        Ott("nf", "Netflix", "", "poster/v", "poster/v", "epimg"),
-        Ott("pv", "Prime Video", "pv/", "pv/v", "pv/h", "pvepimg"),
-        Ott("hs", "Hotstar", "hs/", "hs/v", "hs/h", "hsepimg")
+        Ott("nf", "Netflix", "", "poster/v", "poster/v", "epimg", "🔴"),
+        Ott("pv", "Prime Video", "pv/", "pv/v", "pv/h", "pvepimg", "🟣"),
+        Ott("hs", "Hotstar", "hs/", "hs/v", "hs/h", "hsepimg", "🟠")
     )
 
     private fun ottOf(code: String): Ott = otts.firstOrNull { it.code == code } ?: otts[0]
@@ -107,7 +123,11 @@ class CustomCatalogProvider : MainAPI() {
     private fun catalogRows(): List<HomePageList> {
         val rows = ArrayList<HomePageList>()
         val genreBuckets = LinkedHashMap<String, MutableList<SearchResponse>>()
+        val allMovies = ArrayList<SearchResponse>()
+        val allSeries = ArrayList<SearchResponse>()
+        val recentItems = mutableListOf<Pair<Long, SearchResponse>>()
 
+        // Single pass to categorize everything
         for (o in otts) {
             val m = NetflixMirrorStorage.getAll(o.code).toMutableMap()
             if (o.code == "nf") {
@@ -115,31 +135,64 @@ class CustomCatalogProvider : MainAPI() {
                     if (id.isNotBlank() && !m.containsKey(id)) m[id] = CatalogRecord()
                 }
             }
-            if (m.isEmpty()) continue
-
-            val movies = ArrayList<SearchResponse>()
-            val series = ArrayList<SearchResponse>()
-            val more = ArrayList<SearchResponse>()
+            
+            val ottMovies = ArrayList<SearchResponse>()
+            val ottSeries = ArrayList<SearchResponse>()
 
             m.forEach { (id, rec) ->
                 val c = card(o, id, rec.n)
-                when (rec.t) {
-                    "m" -> movies.add(c)
-                    "s" -> series.add(c)
-                    else -> more.add(c)
+                
+                // For Recently Added (only if we know the title)
+                if (rec.n.isNotEmpty()) {
+                    recentItems.add(Pair(rec.ts, c))
                 }
-                rec.g.forEach { genre -> genreBuckets.getOrPut(genre) { ArrayList() }.add(c) }
+
+                when (rec.t) {
+                    "m" -> { allMovies.add(c); ottMovies.add(c) }
+                    "s" -> { allSeries.add(c); ottSeries.add(c) }
+                }
+                
+                // Filter out fake genres and categorize
+                rec.g.forEach { genre ->
+                    val cleanGenre = genre.lowercase().trim()
+                    if (cleanGenre.isNotEmpty() && cleanGenre !in genreBlacklist && cleanGenre.length > 2) {
+                        val properGenre = genre.trim().split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                        genreBuckets.getOrPut(properGenre) { ArrayList() }.add(c)
+                    }
+                }
             }
 
-            if (movies.isNotEmpty()) rows.add(HomePageList("${o.label} Movies (${movies.size})", movies.shuffled()))
-            if (series.isNotEmpty()) rows.add(HomePageList("${o.label} Series (${series.size})", series.shuffled()))
-            if (more.isNotEmpty()) rows.add(HomePageList("${o.label} • More (${more.size})", more.shuffled()))
+            // Add per-OTT rows
+            if (ottMovies.size >= MIN_ROW_SIZE) {
+                rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled().take(MAX_ITEMS_PER_ROW)))
+            }
+            if (ottSeries.size >= MIN_ROW_SIZE) {
+                rows.add(HomePageList("${o.emoji} ${o.label} Series (${ottSeries.size})", ottSeries.shuffled().take(MAX_ITEMS_PER_ROW)))
+            }
         }
 
+        // 1. Add Recently Added (Sort by timestamp descending)
+        val recent = recentItems.sortedByDescending { it.first }.map { it.second }.take(MAX_ITEMS_PER_ROW)
+        if (recent.size >= MIN_ROW_SIZE) {
+            rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
+        }
+
+        // 2. Add Global Rows
+        if (allMovies.isNotEmpty()) {
+            rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled().take(MAX_ITEMS_PER_ROW)))
+        }
+        if (allSeries.isNotEmpty()) {
+            rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled().take(MAX_ITEMS_PER_ROW)))
+        }
+
+        // 3. Add Clean Genre Rows
         genreBuckets.entries
-            .filter { it.value.size >= MIN_GENRE_SIZE }
+            .filter { it.value.size >= MIN_ROW_SIZE }
             .sortedByDescending { it.value.size }
-            .forEach { (genre, items) -> rows.add(HomePageList("$genre (${items.size})", items.shuffled())) }
+            .take(MAX_ROWS_PER_TAB)
+            .forEach { (genre, items) ->
+                rows.add(HomePageList("🎭 $genre (${items.size})", items.shuffled().take(MAX_ITEMS_PER_ROW)))
+            }
 
         return rows
     }
@@ -147,21 +200,35 @@ class CustomCatalogProvider : MainAPI() {
     private fun languageRows(): List<HomePageList> {
         val byLang = LinkedHashMap<String, MutableList<SearchResponse>>()
         allRecords().forEach { (o, id, rec) ->
-            rec.l.forEach { lang -> byLang.getOrPut(lang) { ArrayList() }.add(card(o, id, rec.n)) }
+            rec.l.forEach { lang ->
+                val cleanLang = lang.lowercase().trim()
+                // ONLY show allowed languages to keep the UI clean
+                if (cleanLang in allowedLanguages) {
+                    val properLang = lang.trim().replaceFirstChar { it.uppercase() }
+                    byLang.getOrPut(properLang) { ArrayList() }.add(card(o, id, rec.n))
+                }
+            }
         }
         return byLang.entries
+            .filter { it.value.size >= MIN_ROW_SIZE }
             .sortedByDescending { it.value.size }
-            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled()) }
+            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled().take(MAX_ITEMS_PER_ROW)) }
     }
 
     private fun yearRows(): List<HomePageList> {
-        val byYear = LinkedHashMap<String, MutableList<SearchResponse>>()
+        val byDecade = LinkedHashMap<String, MutableList<SearchResponse>>()
         allRecords().forEach { (o, id, rec) ->
-            rec.y.takeIf { it.isNotBlank() }?.let { y -> byYear.getOrPut(y) { ArrayList() }.add(card(o, id, rec.n)) }
+            // Only accept valid 4-digit years
+            val yearInt = rec.y.toIntOrNull()
+            if (yearInt != null && yearInt > 1950) {
+                val decade = "${yearInt / 10}0s" // e.g., 2020s, 2010s
+                byDecade.getOrPut(decade) { ArrayList() }.add(card(o, id, rec.n))
+            }
         }
-        return byYear.entries
-            .sortedByDescending { it.key.toIntOrNull() ?: 0 }
-            .map { (year, items) -> HomePageList("$year (${items.size})", items.shuffled()) }
+        return byDecade.entries
+            .filter { it.value.size >= 3 } // Lower threshold for decades
+            .sortedByDescending { it.key }
+            .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled().take(MAX_ITEMS_PER_ROW)) }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
