@@ -16,6 +16,10 @@ In CloudStream: **Settings → Extensions → Add repository**, then enter eithe
   ```
   https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@main/repo.json
   ```
+  ```
+  https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/main/repo.json
+  ```
+  
 
 Open the repo entry and install **ReflexMirror** to get the Netflix / Prime Video / Hotstar / Disney providers plus the self-populating **Custom Catalog**.
 
