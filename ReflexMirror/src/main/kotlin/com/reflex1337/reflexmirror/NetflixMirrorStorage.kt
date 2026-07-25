@@ -123,7 +123,8 @@ data class CatalogRecord(
     val g: List<String> = emptyList(),
     val n: String = "",         // title/name, empty until known
     val y: String = "",         // year, empty until known
-    val l: List<String> = emptyList()  // languages, empty until known
+    val l: List<String> = emptyList(),  // languages, empty until known
+    val ts: Long = System.currentTimeMillis() // Timestamp for Recently Added
 )
 
 data class CatalogStore(
