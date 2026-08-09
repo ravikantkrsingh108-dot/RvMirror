@@ -100,11 +100,27 @@ data class BypassResult(val cookie: String, val addhash: String, val usertoken: 
 @Volatile var cachedBypassTime: Long = 0L
 
 suspend fun bypass(mainUrl: String): BypassResult {
+    // 1. Check in-memory cache first (instant)
     val cached = cachedBypass
     if (cached != null && cached.cookie.isNotEmpty() && System.currentTimeMillis() - cachedBypassTime < 54_000_000) {
         return cached
     }
 
+    // 2. Check persistent storage (Survives app restarts)
+    try {
+        val (savedBypass, savedTimestamp) = NetflixMirrorStorage.getBypassResult()
+        if (savedBypass != null && savedBypass.cookie.isNotEmpty() && System.currentTimeMillis() - savedTimestamp < 54_000_000) {
+            cachedBypass = savedBypass
+            cachedBypassTime = savedTimestamp
+            return savedBypass
+        }
+        // If it's expired, clear it
+        if (savedBypass != null) NetflixMirrorStorage.clearBypassResult()
+    } catch (e: Exception) {
+        // Storage might not be initialized yet on very first run
+    }
+
+    // 3. If no valid cache, run the 25-second bypass
     val homeResp = app.get(
         "$mainUrl/mobile/home?app=1",
         headers = BROWSER_HEADERS,
@@ -156,7 +172,7 @@ suspend fun bypass(mainUrl: String): BypassResult {
         val result = BypassResult(cookie, "", "", dataTime)
         cachedBypass = result
         cachedBypassTime = System.currentTimeMillis()
-        NetflixMirrorStorage.saveCookie(cookie)
+        NetflixMirrorStorage.saveBypassResult(result) // SAVE TO PERSISTENT STORAGE
         return result
     }
 
@@ -167,6 +183,7 @@ suspend fun bypass(mainUrl: String): BypassResult {
         val result = BypassResult(cookie, "", "", dataTime)
         cachedBypass = result
         cachedBypassTime = System.currentTimeMillis()
+        NetflixMirrorStorage.saveBypassResult(result) // SAVE TO PERSISTENT STORAGE
         return result
     }
 
@@ -209,7 +226,7 @@ suspend fun bypass(mainUrl: String): BypassResult {
     val result = BypassResult(finalCookie, addhash, usertoken, dataTime)
     cachedBypass = result
     cachedBypassTime = System.currentTimeMillis()
-    NetflixMirrorStorage.saveCookie(finalCookie)
+    NetflixMirrorStorage.saveBypassResult(result) // SAVE TO PERSISTENT STORAGE
     return result
 }
 
