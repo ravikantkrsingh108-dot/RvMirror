@@ -14,7 +14,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 2,
+        "version": 3,
         "internalName": "HDGharTV",
         "description": "Watch Movies and Series on HDGharTV",
         "url": "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/builds/HDGharTV.cs3",
