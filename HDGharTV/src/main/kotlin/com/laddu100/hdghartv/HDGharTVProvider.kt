@@ -122,22 +122,19 @@ class HDGharTVProvider : MainAPI() {
         try {
             when (request.data) {
                 "movies" -> {
-                    // Increased limit to 1000 to load all content
-                    val res = app.get("$base/api/movies/public?page=$page&limit=1000", referer = "$base/")
+                    val res = app.get("$base/api/movies/public?page=$page&limit=20", referer = "$base/")
                     val parsed = parseJson<MediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
                     if (items.isNotEmpty()) {
-                        // Changed isHorizontalImages to false for vertical posters
-                        lists.add(HomePageList("Movies", items, isHorizontalImages = false))
+                        lists.add(HomePageList("Movies", items, isHorizontalImages = true))
                     }
                 }
                 "series" -> {
-                    // Increased limit to 1000 to load all content
-                    val res = app.get("$base/api/series/public?page=$page&limit=1000", referer = "$base/")
+                    val res = app.get("$base/api/series/public?page=$page&limit=20", referer = "$base/")
                     val parsed = parseJson<MediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("series") } ?: emptyList()
                     if (items.isNotEmpty()) {
-                        lists.add(HomePageList("Series", items, isHorizontalImages = false))
+                        lists.add(HomePageList("Series", items, isHorizontalImages = true))
                     }
                 }
                 "featured" -> {
@@ -153,7 +150,7 @@ class HDGharTVProvider : MainAPI() {
                         }
                     }
                     if (items.isNotEmpty()) {
-                        lists.add(HomePageList("Featured", items, isHorizontalImages = false))
+                        lists.add(HomePageList("Featured", items, isHorizontalImages = true))
                     }
                 }
             }
@@ -179,8 +176,7 @@ class HDGharTVProvider : MainAPI() {
         val results = mutableListOf<SearchResponse>()
 
         try {
-            // Added limit=1000 to get all search results instead of just 15
-            val res = app.get("$base/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&limit=1000", referer = "$base/")
+            val res = app.get("$base/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}", referer = "$base/")
             val parsed = parseJson<ApiSearchResponse>(res.text)
             parsed.movies?.forEach { m -> m.toSearchResponse("movie")?.let { results.add(it) } }
             parsed.series?.forEach { s -> s.toSearchResponse("series")?.let { results.add(it) } }
