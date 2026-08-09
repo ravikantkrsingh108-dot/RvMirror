@@ -6,8 +6,6 @@ import com.fasterxml.jackson.core.json.JsonReadFeature
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.databind.cfg.CoercionAction
-import com.fasterxml.jackson.databind.cfg.CoercionInputShape
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.nicehttp.Requests
 import com.lagradost.nicehttp.ResponseParser
@@ -26,12 +24,7 @@ val JSONParser = object : ResponseParser {
         DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false
     ).configure(
         JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true
-    ).also {
-        // FIX: Tell Jackson to treat empty strings ("") as empty lists/collections
-        // This prevents crashes when NetMirror returns "" instead of [] for suggest lists.
-        it.coercionConfigForDefaults()
-            .setCoercion(CoercionInputShape.EmptyString, CoercionAction.AsEmpty)
-    }
+    )
 
     override fun <T : Any> parse(text: String, kClass: KClass<T>): T {
         return mapper.readValue(text, kClass.java)
