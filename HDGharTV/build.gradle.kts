@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 2 // Bumped to 2 to force CloudStream to recognize the fix
+version = 3 // Bumped to 2 to force CloudStream to recognize the fix
 
 android {
     namespace = "com.laddu100.hdghartv" // CRITICAL: This must be here!
