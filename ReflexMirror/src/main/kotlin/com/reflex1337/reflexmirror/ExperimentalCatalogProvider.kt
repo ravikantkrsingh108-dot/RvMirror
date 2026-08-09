@@ -9,11 +9,10 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import okhttp3.Interceptor
 import okhttp3.Response
-import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
 class ExperimentalCatalogProvider : MainAPI() {
-    override var name = "NetMirror Lists (Experimental)"
+    override var name = "NetMirror Smart (Experimental)"
     override var mainUrl = "https://net52.cc"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "en"
@@ -23,10 +22,6 @@ class ExperimentalCatalogProvider : MainAPI() {
     private val headers = BROWSER_HEADERS
 
     private fun cookies(ott: String): Map<String, String> {
-        if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
-            // We run bypass synchronously here because getMainPage is suspend
-            // We use the cached bypass to avoid blocking the UI
-        }
         val c = mutableMapOf(
             "t_hash_t" to (bypassResult?.cookie ?: ""),
             "hd" to "on",
@@ -37,59 +32,104 @@ class ExperimentalCatalogProvider : MainAPI() {
         return c
     }
 
+    private fun posterUrl(o: String, id: String): String {
+        val prefix = when(o) {
+            "pv" -> "pv/v"
+            "hs" -> "hs/v"
+            else -> "poster/v"
+        }
+        return "https://imgcdn.kim/$prefix/$id.jpg"
+    }
+
+    private fun card(ott: String, id: String, title: String = ""): SearchResponse =
+        newAnimeSearchResponse(title, Ref(id, ott).toJson()) {
+            this.posterUrl = posterUrl(ott, id)
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+        }
+
+    private data class OttInfo(val code: String, val label: String, val path: String)
+    private val otts = listOf(
+        OttInfo("nf", "Netflix", ""),
+        OttInfo("pv", "Prime Video", "pv/"),
+        OttInfo("hs", "Hotstar", "hs/")
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
             bypassResult = bypass(mainUrl)
         }
 
         val rows = ArrayList<HomePageList>()
+        val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
 
-        // Scrape Netflix, Prime Video, and Hotstar homepages
-        val otts = listOf(
-            Triple("nf", "Netflix", ""),
-            Triple("pv", "Prime Video", "pv/"),
-            Triple("hs", "Hotstar", "hs/")
+        for (o in otts) {
+            NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
+                allRecords.add(Triple(o.code, id, rec))
+            }
+        }
+
+        // 1. Smart Franchise Rows (Keyword Matching)
+        val franchises = mapOf(
+            "🤖 Transformers Universe" to listOf("transformers", "bumblebee", "optimus", "megatron"),
+            "🦇 Batman & Gotham" to listOf("batman", "dark knight", "joker", "gotham", "penguin"),
+            "🕷️ Spider-Man & Multiverse" to listOf("spider-man", "spiderman", "venom", "morbius", "madame web"),
+            "🧙‍♂️ Wizarding World (Harry Potter)" to listOf("harry potter", "fantastic beasts", "hogwarts", "dumbledore", "voldemort"),
+            "⚔️ Middle Earth (Lord of the Rings)" to listOf("lord of the rings", "the hobbit", "gandalf", "middle earth", "aragorn"),
+            "🚀 Star Wars Galaxy" to listOf("star wars", "mandalorian", "skywalker", "yoda", "boba fett", "ahsoka"),
+            "🏎️ Fast & Furious" to listOf("fast and furious", "fast & furious", "dom toretto", "hobbs", "shaw"),
+            "🦇 Vampires & Werewolves" to listOf("vampire", "werewolf", "dracula", "twilight", "underworld", "blade"),
+            "🤠 Marvel Universe" to listOf("avengers", "marvel", "iron man", "captain america", "thor", "hulk", "black panther", "deadpool", "wolverine", "x-men"),
+            "🦸 DC Universe" to listOf("superman", "wonder woman", "aquaman", "flash", "justice league", "green lantern"),
+            "🦖 Monsters & Kaiju" to listOf("godzilla", "king kong", "monster", "kaiju", "pacific rim"),
+            "🔪 SAW & Conjuring (Horror Franchises)" to listOf("saw", "conjuring", "annabelle", "nun", "insidious", "paranormal")
         )
 
-        for ((code, label, path) in otts) {
-            try {
-                val doc = app.get(
-                    "$mainUrl/mobile/${path}home?app=1",
-                    cookies = cookies(code),
-                    headers = headers,
-                    referer = "$mainUrl/mobile/home?app=1"
-                ).document
+        for ((franchiseName, keywords) in franchises) {
+            val items = allRecords.filter { (_, _, rec) ->
+                rec.n.isNotEmpty() && keywords.any { kw -> rec.n.lowercase().contains(kw) }
+            }.map { (ott, id, rec) -> card(ott, id, rec.n) }
 
-                doc.select(".tray-container, #top10").forEach { element ->
-                    val rowName = element.select("h2, span").text()
-                    if (rowName.isNotBlank()) {
-                        val items = element.select("article, .top10-post").mapNotNull { it.toSearchResult(code, label) }
-                        if (items.isNotEmpty()) {
-                            rows.add(HomePageList("[$label] $rowName", items))
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                // Skip if one OTT fails
+            if (items.size >= 3) {
+                rows.add(HomePageList("$franchiseName (${items.size})", items.shuffled().take(60)))
             }
+        }
+
+        // 2. Smart Genre Mashups (Mood based)
+        val mashups = mapOf(
+            "😂 Action Comedies" to listOf("action", "comedy"),
+            "👻 Horror Comedies" to listOf("horror", "comedy"),
+            "🚀 Sci-Fi Thrillers" to listOf("sci-fi", "thriller"),
+            "💖 Romantic Dramas" to listOf("romance", "drama"),
+            "🔪 Crime Thrillers" to listOf("crime", "thriller")
+        )
+
+        for ((moodName, requiredGenres) in mashups) {
+            val items = allRecords.filter { (_, _, rec) ->
+                val recGenres = rec.g.map { it.lowercase() }
+                requiredGenres.all { rg -> recGenres.any { it.contains(rg) } }
+            }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+
+            if (items.size >= 5) {
+                rows.add(HomePageList("$moodName (${items.size})", items.shuffled().take(60)))
+            }
+        }
+
+        // 3. High Rated (Requires Score in CatalogRecord - fallback to year if not available)
+        // Since we don't parse match score in the crawler, we'll do a "Recent Sci-Fi" grouping
+        val recentSciFi = allRecords.filter { (_, _, rec) ->
+            rec.y.toIntOrNull()?.let { it >= 2020 } ?: false &&
+            rec.g.any { it.lowercase().contains("sci-fi") }
+        }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+
+        if (recentSciFi.size >= 5) {
+            rows.add(HomePageList("🚀 Recent Sci-Fi (2020s) (${recentSciFi.size})", recentSciFi.shuffled().take(60)))
         }
 
         return newHomePageResponse(rows, false)
     }
 
-    private fun Element.toSearchResult(ott: String, label: String): SearchResponse? {
-        val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
-        if (id.isBlank()) return null
-
-        return newAnimeSearchResponse("", Ref(id, ott).toJson()) {
-            // Use generic poster path, it works for all
-            this.posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
-        }
-    }
-
     override suspend fun search(query: String): List<SearchResponse> {
-        return emptyList() // Search is handled by the main providers
+        return emptyList() // Search is handled by main providers
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -132,12 +172,28 @@ class ExperimentalCatalogProvider : MainAPI() {
             ?.let { people.add(ActorData(Actor(it), roleString = "Director")) }
 
         val chips = genre + langs.map { "${flagFor(it)} $it" }
-        val suggest = data.suggest?.map {
-            newAnimeSearchResponse("", Ref(it.id, ottCode).toJson()) {
-                this.posterUrl = "https://imgcdn.kim/poster/v/${it.id}.jpg"
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+
+        // --- SMART LOCAL RECOMMENDATIONS ---
+        // Instead of using NetMirror's random suggestions, we search our local database
+        // for movies that share the same genre or a keyword in the title.
+        val localRecs = ArrayList<SearchResponse>()
+        val titleKeywords = title.split(" ").filter { it.length > 3 } // Ignore small words like "The", "A"
+        
+        for ((recId, rec) in NetflixMirrorStorage.getAll(ottCode)) {
+            if (recId == id) continue // Skip current movie
+            if (rec.n.isEmpty()) continue
+
+            val sharesGenre = rec.g.any { rg -> genre.any { it.equals(rg, ignoreCase = true) } }
+            val sharesKeyword = titleKeywords.any { kw -> rec.n.contains(kw, ignoreCase = true) }
+
+            if (sharesGenre || sharesKeyword) {
+                localRecs.add(card(ottCode, recId, rec.n))
             }
+            if (localRecs.size >= 20) break // Limit to 20 recommendations
         }
+
+        // Use local smart recs if we found any, otherwise fallback to NetMirror's suggestions
+        val suggest = if (localRecs.isNotEmpty()) localRecs else data.suggest?.map { card(ottCode, it.id) }
 
         val isMovie = data.episodes.first() == null
         if (isMovie) {
@@ -165,8 +221,8 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
         return newTvSeriesLoadResponse(title, url, type, episodes) {
-            posterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
-            backgroundPosterUrl = "https://imgcdn.kim/poster/v/$id.jpg"
+            posterUrl = posterUrl(ottCode, id)
+            backgroundPosterUrl = posterUrl(ottCode, id)
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
             plot = data.desc?.trim()?.ifBlank { null }
             year = data.year.toIntOrNull()
