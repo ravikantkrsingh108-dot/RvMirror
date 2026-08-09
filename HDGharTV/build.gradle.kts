@@ -1,24 +1,25 @@
-version = 4
+// use an integer for version numbers
+version = 2 // Bumped to 2 to force CloudStream to recognize the fix
 
 android {
+    namespace = "com.laddu100.hdghartv" // CRITICAL: This must be here!
     buildFeatures {
         buildConfig = true
     }
 }
 
-dependencies {
-    implementation("com.google.android.material:material:1.12.0")
-}
+// Do NOT add any implementation dependencies here! 
+// CloudStream already provides Jackson and all network libraries.
 
 cloudstream {
     language = "hi"
-    description = "Movies & Series with Multi-Audio (Hindi, English, Tamil, Telugu, etc.)"
-    authors = listOf("KSHITIJ8473")
-
+    description = "Watch Movies and Series on HDGharTV"
+    authors = listOf("laddu100")
     status = 1
     tvTypes = listOf(
         "Movie",
         "TvSeries"
     )
-    iconUrl = "https://hdghartv.cc/favicon.png"
+    requiresResources = false
+    iconUrl = "https://www.google.com/s2/favicons?domain=hdghartv.cc&sz=%size%"
 }
