@@ -22,11 +22,12 @@ open class reflexmirrorPlugin: Plugin() {
         // Custom, id-driven catalog (edit CustomCatalogIds to add cards)
         registerMainAPI(CustomCatalogProvider())
         registerMainAPI(ExperimentalCatalogProvider())
+        registerMainAPI(ExperimentalCatalogProvider1())
         
         // Force-enable all 4 specialized sub-studios directly on startup
-        registerMainAPI(DisneyStudioProvider("disney", "Disney"))
-        registerMainAPI(DisneyStudioProvider("marvel", "Marvel"))
-        registerMainAPI(DisneyStudioProvider("starwars", "Star Wars"))
-        registerMainAPI(DisneyStudioProvider("pixar", "Pixar"))
+        //registerMainAPI(DisneyStudioProvider("disney", "Disney"))
+        //registerMainAPI(DisneyStudioProvider("marvel", "Marvel"))
+        //registerMainAPI(DisneyStudioProvider("starwars", "Star Wars"))
+        //registerMainAPI(DisneyStudioProvider("pixar", "Pixar"))
     }
 }
