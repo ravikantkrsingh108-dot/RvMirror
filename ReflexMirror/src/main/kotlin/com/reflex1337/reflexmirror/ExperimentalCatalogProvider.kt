@@ -13,7 +13,7 @@ import okhttp3.Response
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
 class ExperimentalCatalogProvider : MainAPI() {
-    override var name = "NetMirror Smart (Experimental)"
+    override var name = "NetMirror Smart"
     override var mainUrl = "https://net52.cc"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "en"
