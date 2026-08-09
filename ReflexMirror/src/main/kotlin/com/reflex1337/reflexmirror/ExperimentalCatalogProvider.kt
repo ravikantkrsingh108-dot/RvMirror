@@ -65,10 +65,21 @@ class ExperimentalCatalogProvider : MainAPI() {
     data class TmdbResponse(val results: List<TmdbItem>? = null)
     data class TmdbItem(val id: Int, val title: String? = null, val name: String? = null, val release_date: String? = null, val first_air_date: String? = null)
 
+    // Helper to clean titles for better matching (e.g., "Batman: The Dark Knight" -> "batmanthedarkknight")
+    private fun cleanTitle(title: String): String {
+        return title.lowercase()
+            .replace(" ", "")
+            .replace(":", "")
+            .replace("-", "")
+            .replace(".", "")
+            .trim()
+    }
+
     // Fetches a list from TMDB and cross-references with local storage
-    private suspend fun fetchTmdbRow(rowName: String, tmdbListId: String, isMovie: Boolean): HomePageList? {
+    private suspend fun fetchTmdbRow(rowName: String, endpoint: String): HomePageList? {
+        if (tmdbApiKey == "YOUR_TMDB_KEY") return null // Don't fetch if key is missing
         try {
-            val tmdbData = app.get("$tmdbUrl/list/$tmdbListId?api_key=$tmdbApiKey&language=en-US").parsed<TmdbResponse>()
+            val tmdbData = app.get("$tmdbUrl$endpoint?api_key=$tmdbApiKey&language=en-US").parsed<TmdbResponse>()
             val items = ArrayList<SearchResponse>()
             val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
 
@@ -81,10 +92,12 @@ class ExperimentalCatalogProvider : MainAPI() {
             for (tmdbItem in tmdbData.results ?: emptyList()) {
                 val tmdbTitle = tmdbItem.title ?: tmdbItem.name ?: continue
                 val tmdbYear = (tmdbItem.release_date ?: tmdbItem.first_air_date ?: "").substringBefore("-")
+                val cleanTmdbTitle = cleanTitle(tmdbTitle)
 
-                // Find a match in local storage
+                // Find a match in local storage (ignoring spaces/punctuation)
                 val match = allRecords.find { (_, _, rec) ->
-                    rec.n.equals(tmdbTitle, ignoreCase = true) && (rec.y == tmdbYear || rec.y.isEmpty())
+                    val cleanRecTitle = cleanTitle(rec.n)
+                    cleanRecTitle == cleanTmdbTitle && (rec.y == tmdbYear || rec.y.isEmpty() || tmdbYear.isEmpty())
                 }
 
                 if (match != null) {
@@ -92,7 +105,7 @@ class ExperimentalCatalogProvider : MainAPI() {
                 }
             }
 
-            return if (items.size >= 5) HomePageList(rowName, items.shuffled().take(60)) else null
+            return if (items.size >= 3) HomePageList("$rowName (${items.size})", items.shuffled().take(60)) else null
         } catch (e: Exception) {
             return null
         }
@@ -116,22 +129,23 @@ class ExperimentalCatalogProvider : MainAPI() {
             .sortedByDescending { it.third.ts }
             .take(60)
             .map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (recent.size >= 5) rows.add(HomePageList("🆕 Recently Added", recent))
+        if (recent.size >= 5) rows.add(HomePageList("🆕 Recently Added (${recent.size})", recent))
 
-        // 2. TMDB Curated Lists (Requires TMDB List IDs)
-        // You can create these lists on TMDB website and put their IDs here
-        // Example: "Top 100 Movies" -> list ID 12345
-        val tmdbLists = mapOf(
-            "🎬 Top 100 Movies" to "5e7c5f3c3a4d6c0001e1c2b3", // Replace with real TMDB List ID
-            "⚔️ Best Action Movies" to "5e7c5f3c3a4d6c0001e1c2b4", // Replace with real TMDB List ID
-            "😂 Best Comedies" to "5e7c5f3c3a4d6c0001e1c2b5",    // Replace with real TMDB List ID
-            "👻 Horror Classics" to "5e7c5f3c3a4d6c0001e1c2b6"   // Replace with real TMDB List ID
+        // 2. TMDB Curated Lists (Using standard TMDB API endpoints)
+        // No need to create lists manually, these pull directly from TMDB's database
+        val tmdbEndpoints = mapOf(
+            "🔥 Trending Movies" to "/trending/movie/week",
+            "⭐ Top Rated Movies" to "/movie/top_rated",
+            "🎭 Top Comedies" to "/discover/movie?with_genres=35&sort_by=popularity.desc",
+            "🚀 Top Sci-Fi" to "/discover/movie?with_genres=878&sort_by=popularity.desc",
+            "🔪 Top Horror" to "/discover/movie?with_genres=27&sort_by=popularity.desc",
+            "⚔️ Top Action" to "/discover/movie?with_genres=28&sort_by=popularity.desc"
         )
 
         // Fetch TMDB rows in parallel for speed
-        val tmdbJobs = tmdbLists.map { (name, id) ->
+        val tmdbJobs = tmdbEndpoints.map { (name, endpoint) ->
             coroutineScope {
-                async { fetchTmdbRow(name, id, true) }
+                async { fetchTmdbRow(name, endpoint) }
             }
         }.awaitAll()
 
@@ -140,7 +154,7 @@ class ExperimentalCatalogProvider : MainAPI() {
         // 3. Local All Movies/Series Fallback
         val movies = allRecords.filter { it.third.t == "m" && it.third.n.isNotEmpty() }
             .map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (movies.size >= 5) rows.add(HomePageList("🎬 All Local Movies", movies.shuffled().take(60)))
+        if (movies.size >= 5) rows.add(HomePageList("🎬 All Local Movies (${movies.size})", movies.shuffled().take(60)))
 
         return newHomePageResponse(rows, false)
     }
@@ -192,40 +206,44 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         // --- TMDB RECOMMENDATIONS ---
         val localRecs = ArrayList<SearchResponse>()
-        try {
-            // 1. Search TMDB for the current movie to get TMDB ID
-            val searchUrl = "$tmdbUrl/search/movie?api_key=$tmdbApiKey&query=${java.net.URLEncoder.encode(title, "UTF-8")}&year=${data.year}"
-            val searchResp = app.get(searchUrl).parsed<TmdbResponse>()
-            val tmdbId = searchResp.results?.firstOrNull()?.id
+        if (tmdbApiKey != "YOUR_TMDB_KEY") {
+            try {
+                // 1. Search TMDB for the current movie to get TMDB ID
+                val searchUrl = "$tmdbUrl/search/movie?api_key=$tmdbApiKey&query=${java.net.URLEncoder.encode(title, "UTF-8")}&year=${data.year}"
+                val searchResp = app.get(searchUrl).parsed<TmdbResponse>()
+                val tmdbId = searchResp.results?.firstOrNull()?.id
 
-            if (tmdbId != null) {
-                // 2. Get TMDB Recommendations
-                val recUrl = "$tmdbUrl/movie/$tmdbId/recommendations?api_key=$tmdbApiKey"
-                val recResp = app.get(recUrl).parsed<TmdbResponse>()
+                if (tmdbId != null) {
+                    // 2. Get TMDB Recommendations
+                    val recUrl = "$tmdbUrl/movie/$tmdbId/recommendations?api_key=$tmdbApiKey"
+                    val recResp = app.get(recUrl).parsed<TmdbResponse>()
 
-                // 3. Cross-reference TMDB recommendations with local storage
-                val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
-                for (o in otts) {
-                    NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
-                        allRecords.add(Triple(o.code, id, rec))
+                    // 3. Cross-reference TMDB recommendations with local storage
+                    val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
+                    for (o in otts) {
+                        NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
+                            allRecords.add(Triple(o.code, id, rec))
+                        }
+                    }
+
+                    for (tmdbRec in recResp.results ?: emptyList()) {
+                        val recTitle = tmdbRec.title ?: tmdbRec.name ?: continue
+                        val recYear = (tmdbRec.release_date ?: tmdbRec.first_air_date ?: "").substringBefore("-")
+                        val cleanRecTmdbTitle = cleanTitle(recTitle)
+
+                        val match = allRecords.find { (_, _, rec) ->
+                            val cleanRecTitle = cleanTitle(rec.n)
+                            cleanRecTitle == cleanRecTmdbTitle && (rec.y == recYear || rec.y.isEmpty() || recYear.isEmpty())
+                        }
+
+                        if (match != null) {
+                            localRecs.add(card(match.first, match.second, match.third.n))
+                        }
+                        if (localRecs.size >= 20) break
                     }
                 }
-
-                for (tmdbRec in recResp.results ?: emptyList()) {
-                    val recTitle = tmdbRec.title ?: tmdbRec.name ?: continue
-                    val recYear = (tmdbRec.release_date ?: tmdbRec.first_air_date ?: "").substringBefore("-")
-
-                    val match = allRecords.find { (_, _, rec) ->
-                        rec.n.equals(recTitle, ignoreCase = true) && (rec.y == recYear || rec.y.isEmpty())
-                    }
-
-                    if (match != null) {
-                        localRecs.add(card(match.first, match.second, match.third.n))
-                    }
-                    if (localRecs.size >= 20) break
-                }
-            }
-        } catch (e: Exception) {}
+            } catch (e: Exception) {}
+        }
 
         // Use TMDB recs if found, otherwise fallback to NetMirror's suggestions
         val suggest = if (localRecs.isNotEmpty()) localRecs else data.suggest?.map { card(ottCode, it.id) }
