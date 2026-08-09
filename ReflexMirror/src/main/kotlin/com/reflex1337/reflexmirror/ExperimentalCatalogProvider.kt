@@ -3,7 +3,6 @@ package com.reflex1337.reflexmirror
 import android.content.Context
 import com.reflex1337.reflexmirror.entities.EpisodesData
 import com.reflex1337.reflexmirror.entities.PostData
-import com.reflex1337.reflexmirror.entities.SearchData
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
@@ -11,9 +10,12 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import okhttp3.Interceptor
 import okhttp3.Response
 import com.lagradost.cloudstream3.APIHolder.unixTime
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 class ExperimentalCatalogProvider : MainAPI() {
-    override var name = "NetMirror Smart (Experimental)"
+    override var name = "NetMirror Premium (TMDB)"
     override var mainUrl = "https://net52.cc"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "en"
@@ -21,6 +23,10 @@ class ExperimentalCatalogProvider : MainAPI() {
 
     private var bypassResult: BypassResult? = null
     private val headers = BROWSER_HEADERS
+
+    // PASTE YOUR TMDB API KEY HERE
+    private val tmdbApiKey = "a39a5db3f106797c36ec426da8b94095" 
+    private val tmdbUrl = "https://api.themoviedb.org/3"
 
     private fun cookies(ott: String): Map<String, String> {
         val c = mutableMapOf(
@@ -55,23 +61,42 @@ class ExperimentalCatalogProvider : MainAPI() {
         OttInfo("hs", "Hotstar", "hs/")
     )
 
-    // Smart Search Queries to dynamically build accurate rows
-    private val smartQueries = listOf(
-        "James Bond" to "🕶️ James Bond Collection",
-        "Slasher" to "🔪 Slashers & Serial Killers",
-        "Survival" to "🏔️ Survival & Wilderness",
-        "Feel Good" to "😊 Feel Good Movies",
-        "Sony Pictures" to "🎥 Sony Pictures Classics",
-        "Studio Ghibli" to "🍃 Studio Ghibli Magic",
-        "Time Travel" to "⏳ Time Travel Adventures",
-        "Vampire" to "🧛 Vampires & Dracula",
-        "Zombie" to "🧟 Zombie Apocalypse",
-        "Alien" to "👽 Alien & Space Invaders",
-        "Heist" to "💰 Heists & Robberies",
-        "Assassin" to "🔫 Assassins & Hitmen",
-        "Post Apocalyptic" to "☢️ Post-Apocalyptic Worlds",
-        "Coming of Age" to "🎓 Coming of Age"
-    )
+    // Data classes for TMDB API response
+    data class TmdbResponse(val results: List<TmdbItem>? = null)
+    data class TmdbItem(val id: Int, val title: String? = null, val name: String? = null, val release_date: String? = null, val first_air_date: String? = null)
+
+    // Fetches a list from TMDB and cross-references with local storage
+    private suspend fun fetchTmdbRow(rowName: String, tmdbListId: String, isMovie: Boolean): HomePageList? {
+        try {
+            val tmdbData = app.get("$tmdbUrl/list/$tmdbListId?api_key=$tmdbApiKey&language=en-US").parsed<TmdbResponse>()
+            val items = ArrayList<SearchResponse>()
+            val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
+
+            for (o in otts) {
+                NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
+                    allRecords.add(Triple(o.code, id, rec))
+                }
+            }
+
+            for (tmdbItem in tmdbData.results ?: emptyList()) {
+                val tmdbTitle = tmdbItem.title ?: tmdbItem.name ?: continue
+                val tmdbYear = (tmdbItem.release_date ?: tmdbItem.first_air_date ?: "").substringBefore("-")
+
+                // Find a match in local storage
+                val match = allRecords.find { (_, _, rec) ->
+                    rec.n.equals(tmdbTitle, ignoreCase = true) && (rec.y == tmdbYear || rec.y.isEmpty())
+                }
+
+                if (match != null) {
+                    items.add(card(match.first, match.second, match.third.n))
+                }
+            }
+
+            return if (items.size >= 5) HomePageList(rowName, items.shuffled().take(60)) else null
+        } catch (e: Exception) {
+            return null
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
@@ -80,55 +105,42 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         val rows = ArrayList<HomePageList>()
 
-        // Fetch dynamic rows using NetMirror's search engine across all OTTs
-        // We shuffle the queries so the homepage looks different every time you open it
-        for ((query, rowName) in smartQueries.shuffled().take(8)) {
-            val items = ArrayList<SearchResponse>()
-            
-            for (o in otts) {
-                try {
-                    val results = app.get(
-                        "$mainUrl/mobile/${o.path}search.php?s=$query&t=${APIHolder.unixTime}",
-                        referer = "$mainUrl/home",
-                        cookies = cookies(o.code)
-                    ).parsed<SearchData>().searchResult
-
-                    results.forEach { r ->
-                        items.add(newAnimeSearchResponse(r.t, Ref(r.id, o.code).toJson()) {
-                            this.posterUrl = posterUrl(o.code, r.id)
-                            posterHeaders = mapOf("Referer" to "$mainUrl/home")
-                        })
-                    }
-                } catch (e: Exception) {}
-            }
-
-            if (items.isNotEmpty()) {
-                rows.add(HomePageList("$rowName (${items.size})", items.shuffled().take(60)))
-            }
-        }
-
-        // Also add a few rows from local storage (Recently Added & Top Movies)
+        // 1. Local Recently Added
         val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
         for (o in otts) {
             NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
                 allRecords.add(Triple(o.code, id, rec))
             }
         }
-
         val recent = allRecords.filter { it.third.n.isNotEmpty() }
             .sortedByDescending { it.third.ts }
             .take(60)
             .map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (recent.size >= 5) rows.add(HomePageList("🆕 Recently Added", recent))
 
-        if (recent.size >= 5) {
-            rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
-        }
+        // 2. TMDB Curated Lists (Requires TMDB List IDs)
+        // You can create these lists on TMDB website and put their IDs here
+        // Example: "Top 100 Movies" -> list ID 12345
+        val tmdbLists = mapOf(
+            "🎬 Top 100 Movies" to "5e7c5f3c3a4d6c0001e1c2b3", // Replace with real TMDB List ID
+            "⚔️ Best Action Movies" to "5e7c5f3c3a4d6c0001e1c2b4", // Replace with real TMDB List ID
+            "😂 Best Comedies" to "5e7c5f3c3a4d6c0001e1c2b5",    // Replace with real TMDB List ID
+            "👻 Horror Classics" to "5e7c5f3c3a4d6c0001e1c2b6"   // Replace with real TMDB List ID
+        )
 
+        // Fetch TMDB rows in parallel for speed
+        val tmdbJobs = tmdbLists.map { (name, id) ->
+            coroutineScope {
+                async { fetchTmdbRow(name, id, true) }
+            }
+        }.awaitAll()
+
+        tmdbJobs.filterNotNull().forEach { rows.add(it) }
+
+        // 3. Local All Movies/Series Fallback
         val movies = allRecords.filter { it.third.t == "m" && it.third.n.isNotEmpty() }
             .map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (movies.size >= 5) {
-            rows.add(HomePageList("🎬 All Movies (${movies.size})", movies.shuffled().take(60)))
-        }
+        if (movies.size >= 5) rows.add(HomePageList("🎬 All Local Movies", movies.shuffled().take(60)))
 
         return newHomePageResponse(rows, false)
     }
@@ -178,30 +190,44 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         val chips = genre + langs.map { "${flagFor(it)} $it" }
 
-        // --- SMART LOCAL RECOMMENDATIONS ---
-        // We look for exact title keyword matches (length > 4 to avoid "The", "A")
-        // AND we ensure the genre matches exactly (case-insensitive).
+        // --- TMDB RECOMMENDATIONS ---
         val localRecs = ArrayList<SearchResponse>()
-        val titleKeywords = title.split(" ").filter { it.length > 4 }.map { it.lowercase() }
-        
-        for ((recId, rec) in NetflixMirrorStorage.getAll(ottCode)) {
-            if (recId == id) continue
-            if (rec.n.isEmpty()) continue
+        try {
+            // 1. Search TMDB for the current movie to get TMDB ID
+            val searchUrl = "$tmdbUrl/search/movie?api_key=$tmdbApiKey&query=${java.net.URLEncoder.encode(title, "UTF-8")}&year=${data.year}"
+            val searchResp = app.get(searchUrl).parsed<TmdbResponse>()
+            val tmdbId = searchResp.results?.firstOrNull()?.id
 
-            val recTitleLower = rec.n.lowercase()
-            val recGenresLower = rec.g.map { it.lowercase() }
-            
-            val sharesGenre = genre.any { g -> recGenresLower.contains(g.lowercase()) }
-            val sharesKeyword = titleKeywords.any { kw -> recTitleLower.contains(kw) }
+            if (tmdbId != null) {
+                // 2. Get TMDB Recommendations
+                val recUrl = "$tmdbUrl/movie/$tmdbId/recommendations?api_key=$tmdbApiKey"
+                val recResp = app.get(recUrl).parsed<TmdbResponse>()
 
-            // Require BOTH a keyword match AND a genre match to prevent false positives
-            if (sharesGenre && sharesKeyword) {
-                localRecs.add(card(ottCode, recId, rec.n))
+                // 3. Cross-reference TMDB recommendations with local storage
+                val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
+                for (o in otts) {
+                    NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
+                        allRecords.add(Triple(o.code, id, rec))
+                    }
+                }
+
+                for (tmdbRec in recResp.results ?: emptyList()) {
+                    val recTitle = tmdbRec.title ?: tmdbRec.name ?: continue
+                    val recYear = (tmdbRec.release_date ?: tmdbRec.first_air_date ?: "").substringBefore("-")
+
+                    val match = allRecords.find { (_, _, rec) ->
+                        rec.n.equals(recTitle, ignoreCase = true) && (rec.y == recYear || rec.y.isEmpty())
+                    }
+
+                    if (match != null) {
+                        localRecs.add(card(match.first, match.second, match.third.n))
+                    }
+                    if (localRecs.size >= 20) break
+                }
             }
-            if (localRecs.size >= 20) break
-        }
+        } catch (e: Exception) {}
 
-        // Fallback to NetMirror's suggestions if smart local recs fail
+        // Use TMDB recs if found, otherwise fallback to NetMirror's suggestions
         val suggest = if (localRecs.isNotEmpty()) localRecs else data.suggest?.map { card(ottCode, it.id) }
 
         val isMovie = data.episodes.first() == null
