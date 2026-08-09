@@ -110,9 +110,16 @@ class ExperimentalCatalogProvider : MainAPI() {
         if (animeHindi.size >= 3) rows.add(HomePageList("🇮🇳 Anime in Hindi (${animeHindi.size})", animeHindi))
 
         // 5. Vast AI Knowledge Base Curated Rows
+        // Checks BOTH Title (rec.n) and Genres (rec.g) for every keyword
         for ((rowName, keywords) in SmartCuratedLists.categories) {
             val items = allRecords.filter { (_, _, rec) ->
-                rec.n.isNotEmpty() && keywords.any { kw -> rec.n.lowercase().contains(kw) }
+                val titleLower = rec.n.lowercase()
+                val genresLower = rec.g.map { it.lowercase() }
+                
+                // Match if ANY keyword is found in the title OR in the genre tags
+                keywords.any { kw -> 
+                    titleLower.contains(kw) || genresLower.any { genre -> genre.contains(kw) }
+                }
             }.map { (ott, id, rec) -> card(ott, id, rec.n) }
 
             if (items.size >= 2) {
@@ -213,13 +220,18 @@ class ExperimentalCatalogProvider : MainAPI() {
         }
 
         val titleLower = title.lowercase()
+        val genresLower = rawGenre.map { it.lowercase() }
 
-        // Tier 1: Exact Franchise Match (from AI Knowledge Base)
+        // Tier 1: Exact Franchise/Theme Match (from AI Knowledge Base)
         for ((_, keywords) in SmartCuratedLists.categories) {
-            if (keywords.any { kw -> titleLower.contains(kw) }) {
+            // Does the current movie match this category?
+            val currentMovieMatches = keywords.any { kw -> titleLower.contains(kw) || genresLower.any { it.contains(kw) } }
+            
+            if (currentMovieMatches) {
                 val franchiseMatches = allRecords.filter { (_, _, rec) ->
                     val recTitleLower = rec.n.lowercase()
-                    keywords.any { kw -> recTitleLower.contains(kw) }
+                    val recGenresLower = rec.g.map { it.lowercase() }
+                    keywords.any { kw -> recTitleLower.contains(kw) || recGenresLower.any { it.contains(kw) } }
                 }.map { (ott, recId, rec) -> card(ott, recId, rec.n) }
                 localRecs.addAll(franchiseMatches)
             }
