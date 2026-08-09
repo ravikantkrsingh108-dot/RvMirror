@@ -1,22 +1,22 @@
 [
     {
         "iconUrl": "https://hdghartv.cc/favicon.png",
-        "fileHash": "sha256-fc097484417ed89d4d3e52defbe1f22b9c2aa342a8df17cf76048e55fd585b44",
+        "fileHash": "sha256-254a8842ed14a27afb394bca3ecbc1484d94e59744e9369e687f1110327d520b",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
-        "fileSize": 33849,
+        "fileSize": 34469,
         "status": 1,
         "language": "hi",
         "authors": [
-            "KSHITIJ8473"
+            "laddu100"
         ],
         "tvTypes": [
             "Movie",
             "TvSeries"
         ],
-        "version": 4,
+        "version": 2,
         "internalName": "HDGharTV",
-        "description": "Movies & Series with Multi-Audio (Hindi, English, Tamil, Telugu, etc.)",
+        "description": "Watch Movies and Series on HDGharTV",
         "url": "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/builds/HDGharTV.cs3",
         "name": "HDGharTV"
     },
