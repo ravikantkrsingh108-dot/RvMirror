@@ -55,37 +55,17 @@ class ExperimentalCatalogProvider : MainAPI() {
         OttInfo("hs", "Hotstar", "hs/")
     )
 
-    // --- AI KNOWLEDGE BASE ---
-    // Curated list of themes, franchises, and moods mapped to strict keywords
-    private val knowledgeBase = mapOf(
-        "🧙‍♂️ Wizarding World (Harry Potter)" to listOf("harry potter", "fantastic beasts", "hogwarts", "dumbledore", "voldemort"),
-        "🕷️ Spider-Man Universe" to listOf("spider-man", "spiderman", "venom", "morbius", "madame web"),
-        "🦇 Batman & Gotham" to listOf("batman", "dark knight", "joker", "gotham", "penguin"),
-        "🤠 Marvel Cinematic Universe" to listOf("avengers", "iron man", "captain america", "thor", "black panther", "doctor strange", "guardians of the galaxy", "wakanda", "hulk"),
-        "🦸 DC Extended Universe" to listOf("superman", "wonder woman", "aquaman", "flash", "justice league", "green lantern", "shazam"),
-        "⚔️ Middle Earth (Lord of the Rings)" to listOf("lord of the rings", "the hobbit", "gandalf", "aragorn"),
-        "🚀 Star Wars Galaxy" to listOf("star wars", "mandalorian", "skywalker", "boba fett", "ahsoka", "yoda"),
-        "🏎️ Fast & Furious" to listOf("fast and furious", "fast & furious", "toretto", "hobbs and shaw"),
-        "🤖 Transformers" to listOf("transformers", "bumblebee", "optimus prime", "megatron"),
-        "🦖 Jurassic Park & World" to listOf("jurassic", "dinosaurs"),
-        "🔪 Classic Slashers" to listOf("saw", "conjuring", "annabelle", "nun", "insidious", "friday the 13th", "nightmare on elm street", "halloween"),
-        "🦠 Zombies & Apocalypse" to listOf("zombie", "apocalypse", "resident evil", "walking dead", "world war z"),
-        "🕵️ James Bond" to listOf("james bond", "007", "skyfall", "casino royale", "no time to die"),
-        "📈 Business, Money & Success" to listOf("business", "wall street", "money", "rich", "ceo", "company", "invest", "stock", "bank", "empire", "founder"),
-        "⏳ Time Travel Adventures" to listOf("time travel", "time machine", "time loop", "back to the future"),
-        "🧛 Vampires & Werewolves" to listOf("vampire", "werewolf", "dracula", "twilight", "underworld", "blade"),
-        "👽 Alien & Space Invaders" to listOf("alien", "ufo", "extraterrestrial", "invasion"),
-        "💰 Heists & Robberies" to listOf("heist", "robbery", "thief", "bank rob"),
-        "🔫 Assassins & Hitmen" to listOf("assassin", "hitman", "contract killer"),
-        "🏫 Coming of Age" to listOf("coming of age", "high school", "teenage"),
-        "🎓 College & University" to listOf("college", "university", "campus"),
-        "🎭 Best Comedies" to listOf("comedy", "funny", "hilarious"),
-        "👻 Best Horror" to listOf("horror", "scary", "terrifying"),
-        "🚀 Best Sci-Fi" to listOf("sci-fi", "science fiction", "scifi", "space"),
-        "💖 Romantic Dramas" to listOf("romance", "romantic", "love story"),
-        "🔪 Crime Thrillers" to listOf("crime", "thriller", "mafia", "gangster"),
-        "🍃 Studio Ghibli Magic" to listOf("studio ghibli", "ghibli", "miyazaki")
-    )
+    private val hollywoodKeywords = listOf("spider", "batman", "avengers", "marvel", "dc ", "justice league", "superman", "jurassic", "star wars", "fast and furious", "hobbs", "transformers", "bond", "007", "godzilla", "kong", "matrix", "terminator", "alien", "predator")
+
+    private fun isIndianContent(rec: CatalogRecord): Boolean {
+        val hasIndianLang = rec.l.any { lang ->
+            val lg = lang.lowercase()
+            lg == "hindi" || lg == "tamil" || lg == "telugu" || lg == "malayalam" || lg == "kannada" || lg == "punjabi" || lg == "marathi" || lg == "bengali"
+        }
+        val hasEnglish = rec.l.any { it.equals("english", true) }
+        val isHollywoodFranchise = hollywoodKeywords.any { kw -> rec.n.lowercase().contains(kw) }
+        return hasIndianLang && !hasEnglish && !isHollywoodFranchise
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
@@ -105,31 +85,32 @@ class ExperimentalCatalogProvider : MainAPI() {
         val recent = allRecords.sortedByDescending { it.third.ts }.map { (ott, id, rec) -> card(ott, id, rec.n) }
         if (recent.size >= 5) rows.add(HomePageList("🆕 Recently Added (${recent.size})", recent))
 
-        // 2. Indian Cinema / Bollywood (Smart Filter)
-        val hollywoodKeywords = listOf("spider", "batman", "avengers", "marvel", "dc ", "justice league", "superman", "jurassic", "star wars", "fast and furious", "hobbs", "transformers", "bond", "007", "godzilla", "kong", "matrix", "terminator", "alien", "predator")
-        val indianContent = allRecords.filter { (_, _, rec) ->
-            val hasIndianLang = rec.l.any { lang ->
-                val lg = lang.lowercase()
-                lg == "hindi" || lg == "tamil" || lg == "telugu" || lg == "malayalam" || lg == "kannada" || lg == "punjabi" || lg == "marathi" || lg == "bengali"
-            }
-            val hasEnglish = rec.l.any { it.equals("english", true) }
-            val isHollywoodFranchise = hollywoodKeywords.any { kw -> rec.n.lowercase().contains(kw) }
-            return@filter hasIndianLang && !hasEnglish && !isHollywoodFranchise
-        }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        // 2. Basic Platform Categories (Netflix, Prime, Hotstar Movies & Series)
+        for (o in otts) {
+            val movies = allRecords.filter { (ott, _, rec) -> ott == o.code && rec.t == "m" }
+                .map { (ott, id, rec) -> card(ott, id, rec.n) }
+            val series = allRecords.filter { (ott, _, rec) -> ott == o.code && rec.t == "s" }
+                .map { (ott, id, rec) -> card(ott, id, rec.n) }
+
+            val emoji = when(o.code) { "nf" -> "🔴"; "pv" -> "🟣"; "hs" -> "🟠"; else -> "🎬" }
+            
+            if (movies.size >= 5) rows.add(HomePageList("$emoji ${o.label} Movies (${movies.size})", movies))
+            if (series.size >= 5) rows.add(HomePageList("$emoji ${o.label} Series (${series.size})", series))
+        }
+
+        // 3. Indian Cinema / Bollywood
+        val indianContent = allRecords.filter { (_, _, rec) -> isIndianContent(rec) }
+            .map { (ott, id, rec) -> card(ott, id, rec.n) }
         if (indianContent.size >= 5) rows.add(HomePageList("🇮🇳 Indian Cinema / Bollywood (${indianContent.size})", indianContent))
 
-        // 3. Anime in Hindi
+        // 4. Anime in Hindi
         val animeHindi = allRecords.filter { (_, _, rec) ->
             rec.g.any { it.equals("anime", true) || it.equals("animation", true) } && rec.l.any { it.equals("hindi", true) }
         }.map { (ott, id, rec) -> card(ott, id, rec.n) }
         if (animeHindi.size >= 3) rows.add(HomePageList("🇮🇳 Anime in Hindi (${animeHindi.size})", animeHindi))
 
-        // 4. Hotstar Specials
-        val hotstarOriginals = allRecords.filter { (ott, _, _) -> ott == "hs" }.map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (hotstarOriginals.size >= 5) rows.add(HomePageList("🟠 Hotstar Specials (${hotstarOriginals.size})", hotstarOriginals))
-
-        // 5. AI Knowledge Base Curated Rows
-        for ((rowName, keywords) in knowledgeBase) {
+        // 5. Vast AI Knowledge Base Curated Rows
+        for ((rowName, keywords) in SmartCuratedLists.categories) {
             val items = allRecords.filter { (_, _, rec) ->
                 rec.n.isNotEmpty() && keywords.any { kw -> rec.n.lowercase().contains(kw) }
             }.map { (ott, id, rec) -> card(ott, id, rec.n) }
@@ -234,7 +215,7 @@ class ExperimentalCatalogProvider : MainAPI() {
         val titleLower = title.lowercase()
 
         // Tier 1: Exact Franchise Match (from AI Knowledge Base)
-        for ((_, keywords) in knowledgeBase) {
+        for ((_, keywords) in SmartCuratedLists.categories) {
             if (keywords.any { kw -> titleLower.contains(kw) }) {
                 val franchiseMatches = allRecords.filter { (_, _, rec) ->
                     val recTitleLower = rec.n.lowercase()
@@ -264,7 +245,6 @@ class ExperimentalCatalogProvider : MainAPI() {
             localRecs.addAll(tier3)
         }
 
-        // Deduplicate and limit to 50
         val finalRecs = localRecs.distinctBy { it.url }.take(50)
         val suggest = if (finalRecs.isNotEmpty()) finalRecs else data.suggest?.map { card(ottCode, it.id) }
 
