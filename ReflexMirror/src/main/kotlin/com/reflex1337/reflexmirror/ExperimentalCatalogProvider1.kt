@@ -10,12 +10,9 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import okhttp3.Interceptor
 import okhttp3.Response
 import com.lagradost.cloudstream3.APIHolder.unixTime
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 
-class ExperimentalCatalogProvider1 : MainAPI() {
-    override var name = "NetMirror Premium (TMDB) 1"
+class ExperimentalCatalogProvider : MainAPI() {
+    override var name = "NetMirror Smart"
     override var mainUrl = "https://net52.cc"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "en"
@@ -23,10 +20,6 @@ class ExperimentalCatalogProvider1 : MainAPI() {
 
     private var bypassResult: BypassResult? = null
     private val headers = BROWSER_HEADERS
-
-    // PASTE YOUR TMDB API KEY HERE (v3 Auth)
-    private val tmdbApiKey = "a39a5db3f106797c36ec426da8b94095" 
-    private val tmdbUrl = "https://api.themoviedb.org/3"
 
     private fun cookies(ott: String): Map<String, String> {
         val c = mutableMapOf(
@@ -61,57 +54,32 @@ class ExperimentalCatalogProvider1 : MainAPI() {
         OttInfo("hs", "Hotstar", "hs/")
     )
 
-    // Data classes for TMDB API response
-    data class TmdbResponse(val results: List<TmdbItem>? = null)
-    data class TmdbItem(val id: Int, val title: String? = null, val name: String? = null, val release_date: String? = null, val first_air_date: String? = null)
-
-    // Helper to clean titles for better matching (e.g., "Batman: The Dark Knight" -> "batmandarkknight")
-    private fun cleanTitle(title: String): String {
-        return title.lowercase()
-            .replace("the ", " ")
-            .replace(" ", "")
-            .replace(":", "")
-            .replace("-", "")
-            .replace(".", "")
-            .replace("'", "")
-            .replace("&", "and")
-            .trim()
-    }
-
-    // Fetches a list from TMDB and cross-references with local storage
-    private suspend fun fetchTmdbRow(rowName: String, endpoint: String): HomePageList? {
-        if (tmdbApiKey == "PASTE_YOUR_API_KEY_HERE" || tmdbApiKey.isBlank()) return null
-        try {
-            val tmdbData = app.get("$tmdbUrl$endpoint?api_key=$tmdbApiKey&language=en-US").parsed<TmdbResponse>()
-            val items = ArrayList<SearchResponse>()
-            val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
-
-            for (o in otts) {
-                NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
-                    allRecords.add(Triple(o.code, id, rec))
-                }
+    // --- GENRE NORMALIZER ---
+    private fun normalizeGenres(rawGenres: List<String>): Set<String> {
+        val cleanGenres = mutableSetOf<String>()
+        for (raw in rawGenres) {
+            val lower = raw.lowercase().trim()
+            when {
+                lower.contains("anime") || lower.contains("animation") -> cleanGenres.add("Anime")
+                lower.contains("drama") -> cleanGenres.add("Drama")
+                lower.contains("comed") -> cleanGenres.add("Comedy")
+                lower.contains("action") || lower.contains("adventure") -> cleanGenres.add("Action")
+                lower.contains("romance") || lower.contains("romantic") -> cleanGenres.add("Romance")
+                lower.contains("horror") -> cleanGenres.add("Horror")
+                lower.contains("thrill") -> cleanGenres.add("Thriller")
+                lower.contains("sci-fi") || lower.contains("science fiction") -> cleanGenres.add("Sci-Fi")
+                lower.contains("crime") -> cleanGenres.add("Crime")
+                lower.contains("myster") -> cleanGenres.add("Mystery")
+                lower.contains("fantasy") -> cleanGenres.add("Fantasy")
+                lower.contains("document") -> cleanGenres.add("Documentary")
+                lower.contains("family") -> cleanGenres.add("Family")
+                lower.contains("war") || lower.contains("military") -> cleanGenres.add("War")
+                lower.contains("sport") -> cleanGenres.add("Sports")
+                lower.contains("biograph") || lower.contains("histor") -> cleanGenres.add("History")
+                lower.contains("music") -> cleanGenres.add("Music")
             }
-
-            for (tmdbItem in tmdbData.results ?: emptyList()) {
-                val tmdbTitle = tmdbItem.title ?: tmdbItem.name ?: continue
-                val tmdbYear = (tmdbItem.release_date ?: tmdbItem.first_air_date ?: "").substringBefore("-")
-                val cleanTmdbTitle = cleanTitle(tmdbTitle)
-
-                // Find a match in local storage (ignoring spaces/punctuation)
-                val match = allRecords.find { (_, _, rec) ->
-                    val cleanRecTitle = cleanTitle(rec.n)
-                    cleanRecTitle == cleanTmdbTitle && (rec.y == tmdbYear || rec.y.isEmpty() || tmdbYear.isEmpty())
-                }
-
-                if (match != null) {
-                    items.add(card(match.first, match.second, match.third.n))
-                }
-            }
-
-            return if (items.size >= 3) HomePageList("$rowName (${items.size})", items.shuffled().take(60)) else null
-        } catch (e: Exception) {
-            return null
         }
+        return cleanGenres
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -120,57 +88,60 @@ class ExperimentalCatalogProvider1 : MainAPI() {
         }
 
         val rows = ArrayList<HomePageList>()
-
-        // 1. Local Recently Added
         val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
+
         for (o in otts) {
             NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
-                allRecords.add(Triple(o.code, id, rec))
+                if (rec.n.isNotEmpty()) allRecords.add(Triple(o.code, id, rec))
             }
         }
-        val recent = allRecords.filter { it.third.n.isNotEmpty() }
-            .sortedByDescending { it.third.ts }
-            .take(60)
-            .map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (recent.size >= 5) rows.add(HomePageList("🆕 Recently Added (${recent.size})", recent))
 
-        // 2. TMDB Curated Lists (Auto-generated using TMDB Discover & Collections)
-        val tmdbEndpoints = mapOf(
-            "🔥 Trending Movies" to "/trending/movie/week",
-            "⭐ Top Rated Movies" to "/movie/top_rated",
-            "😂 Best Comedies" to "/discover/movie?with_genres=35&sort_by=vote_average.desc&vote_count.gte=1000",
-            "📺 Best Comedy Series" to "/discover/tv?with_genres=35&sort_by=vote_average.desc&vote_count.gte=1000",
-            "🍃 Best Anime Movies" to "/discover/movie?with_genres=16&with_original_language=ja&sort_by=vote_average.desc&vote_count.gte=500",
-            "📺 Best Anime Series" to "/discover/tv?with_genres=16&with_original_language=ja&sort_by=vote_average.desc&vote_count.gte=500",
-            "🦸 Superhero Movies" to "/discover/movie?with_keywords=9740&sort_by=vote_average.desc&vote_count.gte=1000",
-            "📈 Business & Finance" to "/discover/movie?with_keywords=9731&sort_by=vote_average.desc&vote_count.gte=500",
-            "⏳ Time Travel Adventures" to "/discover/movie?with_keywords=9713&sort_by=vote_average.desc&vote_count.gte=500",
-            "👻 Best Horror" to "/discover/movie?with_genres=27&sort_by=vote_average.desc&vote_count.gte=1000",
-            "🚀 Best Sci-Fi" to "/discover/movie?with_genres=878&sort_by=vote_average.desc&vote_count.gte=1000",
-            "⚔️ Best Action" to "/discover/movie?with_genres=28&sort_by=vote_average.desc&vote_count.gte=1000",
-            "🌍 Documentaries (Life/Travel)" to "/discover/movie?with_genres=99&sort_by=vote_average.desc&vote_count.gte=500",
-            "💖 Romantic Dramas" to "/discover/movie?with_genres=18,10749&sort_by=vote_average.desc&vote_count.gte=1000",
-            "🤠 Marvel Universe" to "/discover/movie?with_companies=420&sort_by=popularity.desc",
-            "🦇 DC Universe" to "/discover/movie?with_companies=9993&sort_by=popularity.desc",
-            "🔮 Wizarding World (Harry Potter)" to "/discover/movie?with_collection=1241",
-            "⚔️ Lord of the Rings" to "/discover/movie?with_collection=119",
-            "🚀 Star Wars Galaxy" to "/discover/movie?with_collection=10",
-            "🕶️ James Bond Collection" to "/discover/movie?with_collection=645"
+        // 1. Smart Franchise Rows (Strict Keyword Matching to avoid false positives)
+        val franchises = mapOf(
+            "🕷️ Spider-Man Universe" to listOf("spider-man", "spiderman", "venom", "morbius", "madame web"),
+            "🦇 Batman & Gotham" to listOf("batman", "dark knight", "joker", "gotham"),
+            "🤠 Marvel Cinematic Universe" to listOf("avengers", "iron man", "captain america", "thor", "black panther", "doctor strange", "guardians of the galaxy", "wakanda"),
+            "🦸 DC Extended Universe" to listOf("superman", "wonder woman", "aquaman", "flash", "justice league", "green lantern", "shazam"),
+            "🧙‍♂️ Wizarding World (Harry Potter)" to listOf("harry potter", "fantastic beasts", "hogwarts"),
+            "⚔️ Middle Earth (Lord of the Rings)" to listOf("lord of the rings", "the hobbit", "gandalf"),
+            "🚀 Star Wars Galaxy" to listOf("star wars", "mandalorian", "skywalker", "boba fett", "ahsoka"),
+            "🏎️ Fast & Furious" to listOf("fast and furious", "fast & furious", "toretto", "hobbs and shaw"),
+            "🤖 Transformers" to listOf("transformers", "bumblebee", "optimus prime", "megatron"),
+            "🔪 Classic Slashers" to listOf("saw", "conjuring", "annabelle", "nun", "insidious", "friday the 13th", "nightmare on elm street", "halloween"),
+            "🦖 Monsters & Kaiju" to listOf("godzilla", "king kong", "monsterverse", "pacific rim"),
+            "🕵️ James Bond" to listOf("james bond", "007", "skyfall", "casino royale", "no time to die")
         )
 
-        // Fetch TMDB rows in parallel for speed
-        val tmdbJobs = tmdbEndpoints.map { (name, endpoint) ->
-            coroutineScope {
-                async { fetchTmdbRow(name, endpoint) }
+        for ((franchiseName, keywords) in franchises) {
+            val items = allRecords.filter { (_, _, rec) ->
+                rec.n.isNotEmpty() && keywords.any { kw -> rec.n.lowercase().contains(kw) }
+            }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+
+            if (items.size >= 2) {
+                rows.add(HomePageList("$franchiseName (${items.size})", items.shuffled()))
             }
-        }.awaitAll()
+        }
 
-        tmdbJobs.filterNotNull().forEach { rows.add(it) }
+        // 2. Smart Normalized Genre Rows
+        val genreBuckets = LinkedHashMap<String, MutableList<SearchResponse>>()
+        for ((ott, id, rec) in allRecords) {
+            val normGenres = normalizeGenres(rec.g)
+            val c = card(ott, id, rec.n)
+            normGenres.forEach { genre ->
+                genreBuckets.getOrPut(genre) { ArrayList() }.add(c)
+            }
+        }
 
-        // 3. Local All Movies/Series Fallback
-        val movies = allRecords.filter { it.third.t == "m" && it.third.n.isNotEmpty() }
-            .map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (movies.size >= 5) rows.add(HomePageList("🎬 All Local Movies (${movies.size})", movies.shuffled().take(60)))
+        genreBuckets.entries
+            .filter { it.value.size >= 10 } // Only show genres with at least 10 items
+            .sortedByDescending { it.value.size }
+            .forEach { (genre, items) ->
+                rows.add(HomePageList("🎭 Best $genre (${items.size})", items.shuffled().take(80)))
+            }
+
+        // 3. Recently Added
+        val recent = allRecords.sortedByDescending { it.third.ts }.take(80).map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (recent.size >= 5) rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
 
         return newHomePageResponse(rows, false)
     }
@@ -208,7 +179,8 @@ class ExperimentalCatalogProvider1 : MainAPI() {
 
         val episodes = arrayListOf<Episode>()
         val title = data.title
-        val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        val rawGenre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        val currentNormGenres = normalizeGenres(rawGenre)
         val langs = languagesOf(data)
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
 
@@ -218,51 +190,59 @@ class ExperimentalCatalogProvider1 : MainAPI() {
         data.director?.trim()?.takeIf { it.isNotEmpty() }
             ?.let { people.add(ActorData(Actor(it), roleString = "Director")) }
 
-        val chips = genre + langs.map { "${flagFor(it)} $it" }
+        val chips = rawGenre + langs.map { "${flagFor(it)} $it" }
 
-        // --- TMDB RECOMMENDATIONS ---
+        // --- SMART LOCAL RECOMMENDATION ENGINE ---
         val localRecs = ArrayList<SearchResponse>()
-        if (tmdbApiKey != "PASTE_YOUR_API_KEY_HERE" && tmdbApiKey.isNotBlank()) {
-            try {
-                // 1. Search TMDB for the current movie to get TMDB ID
-                val searchUrl = "$tmdbUrl/search/movie?api_key=$tmdbApiKey&query=${java.net.URLEncoder.encode(title, "UTF-8")}&year=${data.year}"
-                val searchResp = app.get(searchUrl).parsed<TmdbResponse>()
-                val tmdbId = searchResp.results?.firstOrNull()?.id
-
-                if (tmdbId != null) {
-                    // 2. Get TMDB Recommendations
-                    val recUrl = "$tmdbUrl/movie/$tmdbId/recommendations?api_key=$tmdbApiKey"
-                    val recResp = app.get(recUrl).parsed<TmdbResponse>()
-
-                    // 3. Cross-reference TMDB recommendations with local storage
-                    val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
-                    for (o in otts) {
-                        NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
-                            allRecords.add(Triple(o.code, id, rec))
-                        }
-                    }
-
-                    for (tmdbRec in recResp.results ?: emptyList()) {
-                        val recTitle = tmdbRec.title ?: tmdbRec.name ?: continue
-                        val recYear = (tmdbRec.release_date ?: tmdbRec.first_air_date ?: "").substringBefore("-")
-                        val cleanRecTmdbTitle = cleanTitle(recTitle)
-
-                        val match = allRecords.find { (_, _, rec) ->
-                            val cleanRecTitle = cleanTitle(rec.n)
-                            cleanRecTitle == cleanRecTmdbTitle && (rec.y == recYear || rec.y.isEmpty() || recYear.isEmpty())
-                        }
-
-                        if (match != null) {
-                            localRecs.add(card(match.first, match.second, match.third.n))
-                        }
-                        if (localRecs.size >= 20) break
-                    }
-                }
-            } catch (e: Exception) {}
+        val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
+        for (o in otts) {
+            NetflixMirrorStorage.getAll(o.code).forEach { (recId, rec) ->
+                if (recId != id && rec.n.isNotEmpty()) allRecords.add(Triple(o.code, recId, rec))
+            }
         }
 
-        // Use TMDB recs if found, otherwise fallback to NetMirror's suggestions
-        val suggest = if (localRecs.isNotEmpty()) localRecs else data.suggest?.map { card(ottCode, it.id) }
+        // Extract significant keywords from the current title (ignore "The", "A", etc.)
+        val stopWords = setOf("the", "a", "an", "and", "of", "in", "to", "is", "it", "for", "on", "with")
+        val titleKeywords = title.split(" ").map { it.lowercase().replace(":", "").replace("-", "") }
+            .filter { it.length > 3 && it !in stopWords }
+
+        // Tier 1: Matches BOTH a title keyword AND a genre (Most accurate)
+        val tier1 = allRecords.filter { (_, _, rec) ->
+            val recTitleLower = rec.n.lowercase()
+            val recGenres = normalizeGenres(rec.g)
+            titleKeywords.any { kw -> recTitleLower.contains(kw) } && currentNormGenres.any { g -> recGenres.contains(g) }
+        }.map { (ott, recId, rec) -> card(ott, recId, rec.n) }
+        localRecs.addAll(tier1)
+
+        // Tier 2: Matches exact franchise keywords (e.g., other Spider-Man movies even if genre is missing)
+        if (localRecs.size < 15) {
+            val franchiseKeywords = mapOf(
+                "spider" to listOf("spider-man", "spiderman", "venom"),
+                "batman" to listOf("batman", "dark knight", "joker"),
+                "avengers" to listOf("avengers", "iron man", "captain america", "thor"),
+                "harry" to listOf("harry potter", "fantastic beasts")
+            )
+            val franchiseKey = titleKeywords.firstOrNull { kw -> franchiseKeywords.containsKey(kw) }
+            if (franchiseKey != null) {
+                val tier2 = allRecords.filter { (_, _, rec) ->
+                    franchiseKeywords[franchiseKey]!!.any { kw -> rec.n.lowercase().contains(kw) }
+                }.map { (ott, recId, rec) -> card(ott, recId, rec.n) }
+                localRecs.addAll(tier2.filter { rec -> localRecs.none { it.url == rec.url } })
+            }
+        }
+
+        // Tier 3: Matches just the exact normalized genres
+        if (localRecs.size < 15) {
+            val tier3 = allRecords.filter { (_, _, rec) ->
+                val recGenres = normalizeGenres(rec.g)
+                currentNormGenres.any { g -> recGenres.contains(g) }
+            }.map { (ott, recId, rec) -> card(ott, recId, rec.n) }
+            localRecs.addAll(tier3.filter { rec -> localRecs.none { it.url == rec.url } })
+        }
+
+        // Deduplicate and limit to 20
+        val finalRecs = localRecs.distinctBy { it.url }.take(20)
+        val suggest = if (finalRecs.isNotEmpty()) finalRecs else data.suggest?.map { card(ottCode, it.id) }
 
         val isMovie = data.episodes.first() == null
         if (isMovie) {
@@ -285,7 +265,7 @@ class ExperimentalCatalogProvider1 : MainAPI() {
             }
         }
 
-        NetflixMirrorStorage.addRich(ottCode, id, if (isMovie) "m" else "s", genre, title, data.year, langs)
+        NetflixMirrorStorage.addRich(ottCode, id, if (isMovie) "m" else "s", rawGenre, title, data.year, langs)
         NetflixMirrorStorage.addBareIds(ottCode, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
