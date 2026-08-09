@@ -17,7 +17,7 @@
         "version": 4,
         "internalName": "HDGharTV",
         "description": "Movies & Series with Multi-Audio (Hindi, English, Tamil, Telugu, etc.)",
-        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/HDGharTV.cs3",
+        "url": "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/builds/HDGharTV.cs3",
         "name": "HDGharTV"
     },
     {
@@ -38,7 +38,7 @@
         "version": 12,
         "internalName": "ReflexMirror",
         "description": "Netflix, PrimeVideo, Disney+ Hotstar Contents in Multiple Languages",
-        "url": "https://cdn.jsdelivr.net/gh/ravikantkrsingh108-dot/RvMirror@builds/ReflexMirror.cs3",
+        "url": "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/builds/ReflexMirror.cs3",
         "name": "ReflexMirror"
     }
 ]
