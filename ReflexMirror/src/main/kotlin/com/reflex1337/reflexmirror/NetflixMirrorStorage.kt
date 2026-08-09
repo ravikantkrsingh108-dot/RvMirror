@@ -33,6 +33,41 @@ object NetflixMirrorStorage {
         editor.apply()
     }
 
+    // --- BYPASS RESULT PERSISTENCE ---
+    // Saves the full BypassResult (cookie, addhash, usertoken) so it survives app restarts.
+
+    fun saveBypassResult(result: BypassResult) {
+        val editor = prefs.edit()
+        editor.putString("bypass_cookie", result.cookie)
+        editor.putString("bypass_addhash", result.addhash)
+        editor.putString("bypass_usertoken", result.usertoken)
+        editor.putString("bypass_datatime", result.dataTime)
+        editor.putLong("bypass_timestamp", System.currentTimeMillis())
+        editor.apply()
+    }
+
+    fun getBypassResult(): Pair<BypassResult?, Long> {
+        val cookie = prefs.getString("bypass_cookie", null)
+        if (cookie.isNullOrEmpty()) return Pair(null, 0L)
+        
+        val addhash = prefs.getString("bypass_addhash", "") ?: ""
+        val usertoken = prefs.getString("bypass_usertoken", "") ?: ""
+        val dataTime = prefs.getString("bypass_datatime", "") ?: ""
+        val timestamp = prefs.getLong("bypass_timestamp", 0L)
+        
+        return Pair(BypassResult(cookie, addhash, usertoken, dataTime), timestamp)
+    }
+
+    fun clearBypassResult() {
+        val editor = prefs.edit()
+        editor.remove("bypass_cookie")
+        editor.remove("bypass_addhash")
+        editor.remove("bypass_usertoken")
+        editor.remove("bypass_datatime")
+        editor.remove("bypass_timestamp")
+        editor.apply()
+    }
+
     /**
      * Passive catalog collection. Per ott ("nf", "pv", "hs") we keep a map of
      * id -> {type, genres}. Bare ids (seen on home/suggestions) start as type "?"
