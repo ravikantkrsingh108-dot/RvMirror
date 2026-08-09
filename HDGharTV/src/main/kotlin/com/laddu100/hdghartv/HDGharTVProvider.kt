@@ -292,7 +292,7 @@ class HDGharTVProvider : MainAPI() {
             val type = when {
                 url.contains(".m3u8", ignoreCase = true) -> ExtractorLinkType.M3U8
                 url.contains(".mp4", ignoreCase = true) -> ExtractorLinkType.VIDEO
-                else -> ExtractorLinkType.VIDEO
+                else -> ExtractorLinkType.M3U8
             }
 
             val headers = mutableMapOf(
