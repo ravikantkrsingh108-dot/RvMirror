@@ -3,13 +3,13 @@ package com.reflex1337.reflexmirror
 import android.content.Context
 import com.reflex1337.reflexmirror.entities.EpisodesData
 import com.reflex1337.reflexmirror.entities.PostData
+import com.reflex1337.reflexmirror.entities.SearchData
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import okhttp3.Interceptor
 import okhttp3.Response
-import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
 class ExperimentalCatalogProvider : MainAPI() {
@@ -22,7 +22,7 @@ class ExperimentalCatalogProvider : MainAPI() {
     private var bypassResult: BypassResult? = null
     private val headers = BROWSER_HEADERS
 
-    private fun cookies(ott: String, studio: String = ""): Map<String, String> {
+    private fun cookies(ott: String): Map<String, String> {
         val c = mutableMapOf(
             "t_hash_t" to (bypassResult?.cookie ?: ""),
             "hd" to "on",
@@ -30,14 +30,13 @@ class ExperimentalCatalogProvider : MainAPI() {
         )
         bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { c["addhash"] = it }
         bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { c["usertoken"] = it }
-        if (studio.isNotEmpty()) c["studio"] = studio
         return c
     }
 
     private fun posterUrl(o: String, id: String): String {
         val prefix = when(o) {
             "pv" -> "pv/v"
-            "hs", "dp" -> "hs/v" // Hotstar and Disney use the same poster path
+            "hs", "dp" -> "hs/v"
             else -> "poster/v"
         }
         return "https://imgcdn.kim/$prefix/$id.jpg"
@@ -49,16 +48,43 @@ class ExperimentalCatalogProvider : MainAPI() {
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
 
-    // List of all OTT platforms and Sub-studios to scrape
-    private data class HomePageConfig(val code: String, val label: String, val studio: String)
-    private val homePages = listOf(
-        HomePageConfig("nf", "Netflix", ""),
-        HomePageConfig("pv", "Prime Video", ""),
-        HomePageConfig("hs", "Hotstar", ""),
-        HomePageConfig("dp", "Disney", "disney"),
-        HomePageConfig("dp", "Marvel", "marvel"),
-        HomePageConfig("dp", "Star Wars", "starwars"),
-        HomePageConfig("dp", "Pixar", "pixar")
+    private data class OttInfo(val code: String, val label: String, val path: String)
+    private val otts = listOf(
+        OttInfo("nf", "Netflix", ""),
+        OttInfo("pv", "Prime Video", "pv/"),
+        OttInfo("hs", "Hotstar", "hs/")
+    )
+
+    // --- AI KNOWLEDGE BASE ---
+    // Curated list of themes, franchises, and moods mapped to strict keywords
+    private val knowledgeBase = mapOf(
+        "🧙‍♂️ Wizarding World (Harry Potter)" to listOf("harry potter", "fantastic beasts", "hogwarts", "dumbledore", "voldemort"),
+        "🕷️ Spider-Man Universe" to listOf("spider-man", "spiderman", "venom", "morbius", "madame web"),
+        "🦇 Batman & Gotham" to listOf("batman", "dark knight", "joker", "gotham", "penguin"),
+        "🤠 Marvel Cinematic Universe" to listOf("avengers", "iron man", "captain america", "thor", "black panther", "doctor strange", "guardians of the galaxy", "wakanda", "hulk"),
+        "🦸 DC Extended Universe" to listOf("superman", "wonder woman", "aquaman", "flash", "justice league", "green lantern", "shazam"),
+        "⚔️ Middle Earth (Lord of the Rings)" to listOf("lord of the rings", "the hobbit", "gandalf", "aragorn"),
+        "🚀 Star Wars Galaxy" to listOf("star wars", "mandalorian", "skywalker", "boba fett", "ahsoka", "yoda"),
+        "🏎️ Fast & Furious" to listOf("fast and furious", "fast & furious", "toretto", "hobbs and shaw"),
+        "🤖 Transformers" to listOf("transformers", "bumblebee", "optimus prime", "megatron"),
+        "🦖 Jurassic Park & World" to listOf("jurassic", "dinosaurs"),
+        "🔪 Classic Slashers" to listOf("saw", "conjuring", "annabelle", "nun", "insidious", "friday the 13th", "nightmare on elm street", "halloween"),
+        "🦠 Zombies & Apocalypse" to listOf("zombie", "apocalypse", "resident evil", "walking dead", "world war z"),
+        "🕵️ James Bond" to listOf("james bond", "007", "skyfall", "casino royale", "no time to die"),
+        "📈 Business, Money & Success" to listOf("business", "wall street", "money", "rich", "ceo", "company", "invest", "stock", "bank", "empire", "founder"),
+        "⏳ Time Travel Adventures" to listOf("time travel", "time machine", "time loop", "back to the future"),
+        "🧛 Vampires & Werewolves" to listOf("vampire", "werewolf", "dracula", "twilight", "underworld", "blade"),
+        "👽 Alien & Space Invaders" to listOf("alien", "ufo", "extraterrestrial", "invasion"),
+        "💰 Heists & Robberies" to listOf("heist", "robbery", "thief", "bank rob"),
+        "🔫 Assassins & Hitmen" to listOf("assassin", "hitman", "contract killer"),
+        "🏫 Coming of Age" to listOf("coming of age", "high school", "teenage"),
+        "🎓 College & University" to listOf("college", "university", "campus"),
+        "🎭 Best Comedies" to listOf("comedy", "funny", "hilarious"),
+        "👻 Best Horror" to listOf("horror", "scary", "terrifying"),
+        "🚀 Best Sci-Fi" to listOf("sci-fi", "science fiction", "scifi", "space"),
+        "💖 Romantic Dramas" to listOf("romance", "romantic", "love story"),
+        "🔪 Crime Thrillers" to listOf("crime", "thriller", "mafia", "gangster"),
+        "🍃 Studio Ghibli Magic" to listOf("studio ghibli", "ghibli", "miyazaki")
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -67,59 +93,92 @@ class ExperimentalCatalogProvider : MainAPI() {
         }
 
         val rows = ArrayList<HomePageList>()
-
-        // 1. Scrape NetMirror's native curated lists for ALL platforms
-        for (config in homePages) {
-            try {
-                val doc = app.get(
-                    "$mainUrl/mobile/home?app=1",
-                    cookies = cookies(config.code, config.studio),
-                    headers = headers,
-                    referer = "$mainUrl/mobile/home?app=1"
-                ).document
-
-                doc.select(".tray-container, #top10").forEach { element ->
-                    val rowName = element.select("h2, span").text()
-                    if (rowName.isNotBlank()) {
-                        val items = element.select("article, .top10-post").mapNotNull { 
-                            it.toSearchResult(config.code) 
-                        }
-                        if (items.isNotEmpty()) {
-                            rows.add(HomePageList("[${config.label}] $rowName", items))
-                        }
-                    }
-                }
-            } catch (e: Exception) {}
-        }
-
-        // 2. Fetch "Recently Added" from local storage
         val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
-        for (o in listOf("nf", "pv", "hs")) {
-            NetflixMirrorStorage.getAll(o).forEach { (id, rec) ->
-                allRecords.add(Triple(o, id, rec))
+
+        for (o in otts) {
+            NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
+                if (rec.n.isNotEmpty()) allRecords.add(Triple(o.code, id, rec))
             }
         }
-        val recent = allRecords.filter { it.third.n.isNotEmpty() }
-            .sortedByDescending { it.third.ts }
-            .take(60)
-            .map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (recent.size >= 5) rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
+
+        // 1. Recently Added
+        val recent = allRecords.sortedByDescending { it.third.ts }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (recent.size >= 5) rows.add(HomePageList("🆕 Recently Added (${recent.size})", recent))
+
+        // 2. Indian Cinema / Bollywood (Smart Filter)
+        val hollywoodKeywords = listOf("spider", "batman", "avengers", "marvel", "dc ", "justice league", "superman", "jurassic", "star wars", "fast and furious", "hobbs", "transformers", "bond", "007", "godzilla", "kong", "matrix", "terminator", "alien", "predator")
+        val indianContent = allRecords.filter { (_, _, rec) ->
+            val hasIndianLang = rec.l.any { lang ->
+                val lg = lang.lowercase()
+                lg == "hindi" || lg == "tamil" || lg == "telugu" || lg == "malayalam" || lg == "kannada" || lg == "punjabi" || lg == "marathi" || lg == "bengali"
+            }
+            val hasEnglish = rec.l.any { it.equals("english", true) }
+            val isHollywoodFranchise = hollywoodKeywords.any { kw -> rec.n.lowercase().contains(kw) }
+            return@filter hasIndianLang && !hasEnglish && !isHollywoodFranchise
+        }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (indianContent.size >= 5) rows.add(HomePageList("🇮🇳 Indian Cinema / Bollywood (${indianContent.size})", indianContent))
+
+        // 3. Anime in Hindi
+        val animeHindi = allRecords.filter { (_, _, rec) ->
+            rec.g.any { it.equals("anime", true) || it.equals("animation", true) } && rec.l.any { it.equals("hindi", true) }
+        }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (animeHindi.size >= 3) rows.add(HomePageList("🇮🇳 Anime in Hindi (${animeHindi.size})", animeHindi))
+
+        // 4. Hotstar Specials
+        val hotstarOriginals = allRecords.filter { (ott, _, _) -> ott == "hs" }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (hotstarOriginals.size >= 5) rows.add(HomePageList("🟠 Hotstar Specials (${hotstarOriginals.size})", hotstarOriginals))
+
+        // 5. AI Knowledge Base Curated Rows
+        for ((rowName, keywords) in knowledgeBase) {
+            val items = allRecords.filter { (_, _, rec) ->
+                rec.n.isNotEmpty() && keywords.any { kw -> rec.n.lowercase().contains(kw) }
+            }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+
+            if (items.size >= 2) {
+                rows.add(HomePageList("$rowName (${items.size})", items))
+            }
+        }
 
         return newHomePageResponse(rows, false)
     }
 
-    private fun Element.toSearchResult(ott: String): SearchResponse? {
-        val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
-        if (id.isBlank()) return null
-
-        return newAnimeSearchResponse("", Ref(id, ott).toJson()) {
-            this.posterUrl = posterUrl(ott, id)
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
-        }
-    }
-
     override suspend fun search(query: String): List<SearchResponse> {
-        return emptyList()
+        if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
+            bypassResult = bypass(mainUrl)
+        }
+        val q = query.trim()
+
+        val local = otts.flatMap { o ->
+            NetflixMirrorStorage.getAll(o.code).entries
+                .filter { it.value.n.isNotEmpty() && it.value.n.contains(q, ignoreCase = true) }
+                .map { (id, rec) -> card(o.code, id, rec.n) }
+        }
+
+        val live = otts.amap { o ->
+            try {
+                val results = app.get(
+                    "$mainUrl/mobile/${o.path}search.php?s=$q&t=${APIHolder.unixTime}",
+                    referer = "$mainUrl/home",
+                    cookies = cookies(o.code)
+                ).parsed<SearchData>().searchResult
+
+                NetflixMirrorStorage.addBareIds(o.code, results.map { it.id })
+
+                results.map { r ->
+                    newAnimeSearchResponse("${r.t} (${o.label})", Ref(r.id, o.code).toJson()) {
+                        this.posterUrl = posterUrl(o.code, r.id)
+                        posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                    }
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }.flatten()
+
+        val seen = HashSet<String>()
+        val out = ArrayList<SearchResponse>()
+        for (sr in local + live) if (seen.add(sr.url)) out.add(sr)
+        return out
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -130,12 +189,11 @@ class ExperimentalCatalogProvider : MainAPI() {
         val ottCode = ref.ott
         val path = when(ottCode) {
             "pv" -> "pv/"
-            "hs", "dp" -> "hs/" // Disney uses Hotstar paths
+            "hs", "dp" -> "hs/"
             else -> ""
         }
         val id = ref.id
 
-        // Fetch raw text to inspect exactly what NetMirror is returning
         val text = app.get(
             "$mainUrl/mobile/${path}post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
@@ -152,7 +210,7 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         val episodes = arrayListOf<Episode>()
         val title = data.title
-        val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        val rawGenre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
         val langs = languagesOf(data)
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
 
@@ -162,14 +220,53 @@ class ExperimentalCatalogProvider : MainAPI() {
         data.director?.trim()?.takeIf { it.isNotEmpty() }
             ?.let { people.add(ActorData(Actor(it), roleString = "Director")) }
 
-        val chips = genre + langs.map { "${flagFor(it)} $it" }
+        val chips = rawGenre + langs.map { "${flagFor(it)} $it" }
 
-        val suggest = data.suggest?.map {
-            newAnimeSearchResponse("", Ref(it.id, ottCode).toJson()) {
-                this.posterUrl = posterUrl(ottCode, it.id)
-                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+        // --- SMART LOCAL RECOMMENDATION ENGINE (50+ Items) ---
+        val localRecs = ArrayList<SearchResponse>()
+        val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
+        for (o in otts) {
+            NetflixMirrorStorage.getAll(o.code).forEach { (recId, rec) ->
+                if (recId != id && rec.n.isNotEmpty()) allRecords.add(Triple(o.code, recId, rec))
             }
         }
+
+        val titleLower = title.lowercase()
+
+        // Tier 1: Exact Franchise Match (from AI Knowledge Base)
+        for ((_, keywords) in knowledgeBase) {
+            if (keywords.any { kw -> titleLower.contains(kw) }) {
+                val franchiseMatches = allRecords.filter { (_, _, rec) ->
+                    val recTitleLower = rec.n.lowercase()
+                    keywords.any { kw -> recTitleLower.contains(kw) }
+                }.map { (ott, recId, rec) -> card(ott, recId, rec.n) }
+                localRecs.addAll(franchiseMatches)
+            }
+        }
+
+        // Tier 2: Title Keyword Match (Words longer than 4 chars)
+        val stopWords = setOf("the", "a", "an", "and", "of", "in", "to", "is", "it", "for", "on", "with")
+        val titleKeywords = title.split(" ").map { it.lowercase().replace(":", "").replace("-", "") }
+            .filter { it.length > 4 && it !in stopWords }
+
+        val tier2 = allRecords.filter { (_, _, rec) ->
+            val recTitleLower = rec.n.lowercase()
+            titleKeywords.any { kw -> recTitleLower.contains(kw) }
+        }.map { (ott, recId, rec) -> card(ott, recId, rec.n) }
+        localRecs.addAll(tier2)
+
+        // Tier 3: Exact Genre Match
+        if (localRecs.size < 50) {
+            val tier3 = allRecords.filter { (_, _, rec) ->
+                val recGenres = rec.g.map { it.lowercase() }
+                rawGenre.any { g -> recGenres.contains(g.lowercase()) }
+            }.map { (ott, recId, rec) -> card(ott, recId, rec.n) }
+            localRecs.addAll(tier3)
+        }
+
+        // Deduplicate and limit to 50
+        val finalRecs = localRecs.distinctBy { it.url }.take(50)
+        val suggest = if (finalRecs.isNotEmpty()) finalRecs else data.suggest?.map { card(ottCode, it.id) }
 
         val isMovie = data.episodes.first() == null
         if (isMovie) {
@@ -192,20 +289,15 @@ class ExperimentalCatalogProvider : MainAPI() {
             }
         }
 
-        NetflixMirrorStorage.addRich(ottCode, id, if (isMovie) "m" else "s", genre, title, data.year, langs)
+        NetflixMirrorStorage.addRich(ottCode, id, if (isMovie) "m" else "s", rawGenre, title, data.year, langs)
         NetflixMirrorStorage.addBareIds(ottCode, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
-        
-        // --- EXPERIMENTAL PLOT ---
-        // We append the raw JSON string to the plot so you can see exactly what NetMirror is providing.
-        val experimentalPlot = "${data.desc?.trim() ?: ""}\n\n--- EXPERIMENTAL RAW DATA ---\n$text"
-
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = posterUrl(ottCode, id)
             backgroundPosterUrl = posterUrl(ottCode, id)
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
-            plot = experimentalPlot // Injected raw JSON here
+            plot = data.desc?.trim()?.ifBlank { null }
             year = data.year.toIntOrNull()
             tags = chips
             actors = people
