@@ -264,12 +264,20 @@ class CustomCatalogProvider : MainAPI() {
         val o = ottOf(ref.ott)
         val id = ref.id
 
-        val data = app.get(
+        val text = app.get(
             "$mainUrl/mobile/${o.path}post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
             referer = "$mainUrl/home",
             cookies = cookies(o.code)
-        ).parsed<PostData>()
+        ).text
+        
+        // Fix NetMirror bug where it sends "" instead of [] for lists
+        val sanitizedText = text
+            .replace("\"suggest\":\"\"", "\"suggest\":[]")
+            .replace("\"episodes\":\"\"", "\"episodes\":[]")
+            .replace("\"season\":\"\"", "\"season\":[]")
+        
+        val data = tryParseJson<PostData>(sanitizedText) ?: return null
 
         val episodes = arrayListOf<Episode>()
         val title = data.title
@@ -427,12 +435,20 @@ class CustomCatalogProvider : MainAPI() {
                             val o = ottOf(parts[0])
                             val id = parts[1]
                             try {
-                                val data = app.get(
+                                val text = app.get(
                                     "$mainUrl/mobile/${o.path}post.php?id=$id&t=${APIHolder.unixTime}",
                                     headers,
                                     referer = "$mainUrl/home",
                                     cookies = cookies(o.code)
-                                ).parsed<PostData>()
+                                ).text
+                                
+                                // Fix NetMirror bug where it sends "" instead of [] for lists
+                                val sanitizedText = text
+                                    .replace("\"suggest\":\"\"", "\"suggest\":[]")
+                                    .replace("\"episodes\":\"\"", "\"episodes\":[]")
+                                    .replace("\"season\":\"\"", "\"season\":[]")
+                                
+                                val data = tryParseJson<PostData>(sanitizedText) ?: return@map
 
                                 val type = if (data.episodes.first() == null) "m" else "s"
                                 val genres = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
