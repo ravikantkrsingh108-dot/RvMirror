@@ -11,7 +11,7 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import com.lagradost.cloudstream3.APIHolder.unixTime
 
-class ExperimentalCatalogProvider : MainAPI() {
+class ExperimentalCatalogProvider1 : MainAPI() {
     override var name = "NetMirror Smart"
     override var mainUrl = "https://net52.cc"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
@@ -96,7 +96,34 @@ class ExperimentalCatalogProvider : MainAPI() {
             }
         }
 
-        // 1. Smart Franchise Rows (Strict Keyword Matching to avoid false positives)
+        // 1. Recently Added (At the very top)
+        val recent = allRecords.sortedByDescending { it.third.ts }.take(80).map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (recent.size >= 5) rows.add(HomePageList("🆕 Recently Added (${recent.size})", recent))
+
+        // 2. Indian Cinema / Bollywood (Identified by Language)
+        val indianContent = allRecords.filter { (_, _, rec) ->
+            rec.l.any { lang -> lang.lowercase().let { it == "hindi" || it == "tamil" || it == "telugu" || it == "malayalam" || it == "kannada" } }
+        }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (indianContent.size >= 5) rows.add(HomePageList("🇮🇳 Indian Cinema / Bollywood (${indianContent.size})", indianContent.shuffled().take(80)))
+
+        // 3. Anime in Hindi (Cross-reference Genre + Language)
+        val animeHindi = allRecords.filter { (_, _, rec) ->
+            normalizeGenres(rec.g).contains("Anime") && rec.l.any { it.equals("hindi", true) }
+        }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (animeHindi.size >= 3) rows.add(HomePageList("🇮🇳 Anime in Hindi (${animeHindi.size})", animeHindi.shuffled().take(80)))
+
+        // 4. Hotstar Originals & Exclusives (Identified by OTT platform)
+        val hotstarOriginals = allRecords.filter { (ott, _, _) -> ott == "hs" }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (hotstarOriginals.size >= 5) rows.add(HomePageList("🟠 Hotstar Specials (${hotstarOriginals.size})", hotstarOriginals.shuffled().take(80)))
+
+        // 5. Thematic Rows (Business, Struggle/Success - Identified by Title Keywords)
+        val businessKeywords = listOf("business", "wall street", "money", "rich", "ceo", "company", "invest", "stock", "bank", "empire", "founder")
+        val business = allRecords.filter { (_, _, rec) ->
+            rec.n.lowercase().split(" ").any { word -> businessKeywords.any { kw -> word.contains(kw) } }
+        }.map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (business.size >= 3) rows.add(HomePageList("📈 Business, Money & Success (${business.size})", business.shuffled().take(80)))
+
+        // 6. Smart Franchise Rows (Strict Keyword Matching)
         val franchises = mapOf(
             "🕷️ Spider-Man Universe" to listOf("spider-man", "spiderman", "venom", "morbius", "madame web"),
             "🦇 Batman & Gotham" to listOf("batman", "dark knight", "joker", "gotham"),
@@ -107,8 +134,9 @@ class ExperimentalCatalogProvider : MainAPI() {
             "🚀 Star Wars Galaxy" to listOf("star wars", "mandalorian", "skywalker", "boba fett", "ahsoka"),
             "🏎️ Fast & Furious" to listOf("fast and furious", "fast & furious", "toretto", "hobbs and shaw"),
             "🤖 Transformers" to listOf("transformers", "bumblebee", "optimus prime", "megatron"),
+            "🦖 Jurassic Park & World" to listOf("jurassic", "dinosaurs"),
             "🔪 Classic Slashers" to listOf("saw", "conjuring", "annabelle", "nun", "insidious", "friday the 13th", "nightmare on elm street", "halloween"),
-            "🦖 Monsters & Kaiju" to listOf("godzilla", "king kong", "monsterverse", "pacific rim"),
+            "🦠 Zombies & Apocalypse" to listOf("zombie", "apocalypse", "resident evil", "walking dead", "world war z"),
             "🕵️ James Bond" to listOf("james bond", "007", "skyfall", "casino royale", "no time to die")
         )
 
@@ -118,11 +146,11 @@ class ExperimentalCatalogProvider : MainAPI() {
             }.map { (ott, id, rec) -> card(ott, id, rec.n) }
 
             if (items.size >= 2) {
-                rows.add(HomePageList("$franchiseName (${items.size})", items.shuffled()))
+                rows.add(HomePageList("$franchiseName (${items.size})", items.shuffled().take(80)))
             }
         }
 
-        // 2. Smart Normalized Genre Rows
+        // 7. Smart Normalized Genre Rows
         val genreBuckets = LinkedHashMap<String, MutableList<SearchResponse>>()
         for ((ott, id, rec) in allRecords) {
             val normGenres = normalizeGenres(rec.g)
@@ -138,10 +166,6 @@ class ExperimentalCatalogProvider : MainAPI() {
             .forEach { (genre, items) ->
                 rows.add(HomePageList("🎭 Best $genre (${items.size})", items.shuffled().take(80)))
             }
-
-        // 3. Recently Added
-        val recent = allRecords.sortedByDescending { it.third.ts }.take(80).map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (recent.size >= 5) rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
 
         return newHomePageResponse(rows, false)
     }
@@ -201,12 +225,11 @@ class ExperimentalCatalogProvider : MainAPI() {
             }
         }
 
-        // Extract significant keywords from the current title (ignore "The", "A", etc.)
         val stopWords = setOf("the", "a", "an", "and", "of", "in", "to", "is", "it", "for", "on", "with")
         val titleKeywords = title.split(" ").map { it.lowercase().replace(":", "").replace("-", "") }
             .filter { it.length > 3 && it !in stopWords }
 
-        // Tier 1: Matches BOTH a title keyword AND a genre (Most accurate)
+        // Tier 1: Matches BOTH a title keyword AND a genre
         val tier1 = allRecords.filter { (_, _, rec) ->
             val recTitleLower = rec.n.lowercase()
             val recGenres = normalizeGenres(rec.g)
@@ -214,13 +237,15 @@ class ExperimentalCatalogProvider : MainAPI() {
         }.map { (ott, recId, rec) -> card(ott, recId, rec.n) }
         localRecs.addAll(tier1)
 
-        // Tier 2: Matches exact franchise keywords (e.g., other Spider-Man movies even if genre is missing)
+        // Tier 2: Matches exact franchise keywords
         if (localRecs.size < 15) {
             val franchiseKeywords = mapOf(
                 "spider" to listOf("spider-man", "spiderman", "venom"),
                 "batman" to listOf("batman", "dark knight", "joker"),
                 "avengers" to listOf("avengers", "iron man", "captain america", "thor"),
-                "harry" to listOf("harry potter", "fantastic beasts")
+                "harry" to listOf("harry potter", "fantastic beasts"),
+                "jurassic" to listOf("jurassic", "dinosaurs"),
+                "fast" to listOf("fast and furious", "toretto")
             )
             val franchiseKey = titleKeywords.firstOrNull { kw -> franchiseKeywords.containsKey(kw) }
             if (franchiseKey != null) {
@@ -240,7 +265,6 @@ class ExperimentalCatalogProvider : MainAPI() {
             localRecs.addAll(tier3.filter { rec -> localRecs.none { it.url == rec.url } })
         }
 
-        // Deduplicate and limit to 20
         val finalRecs = localRecs.distinctBy { it.url }.take(20)
         val suggest = if (finalRecs.isNotEmpty()) finalRecs else data.suggest?.map { card(ottCode, it.id) }
 
