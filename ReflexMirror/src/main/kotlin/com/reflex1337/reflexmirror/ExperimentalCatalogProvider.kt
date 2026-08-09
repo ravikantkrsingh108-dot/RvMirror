@@ -3,6 +3,7 @@ package com.reflex1337.reflexmirror
 import android.content.Context
 import com.reflex1337.reflexmirror.entities.EpisodesData
 import com.reflex1337.reflexmirror.entities.PostData
+import com.reflex1337.reflexmirror.entities.SearchData
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
@@ -54,82 +55,86 @@ class ExperimentalCatalogProvider : MainAPI() {
         OttInfo("hs", "Hotstar", "hs/")
     )
 
+    // Smart Search Queries to dynamically build accurate rows
+    private val smartQueries = listOf(
+        "James Bond" to "🕶️ James Bond Collection",
+        "Slasher" to "🔪 Slashers & Serial Killers",
+        "Survival" to "🏔️ Survival & Wilderness",
+        "Feel Good" to "😊 Feel Good Movies",
+        "Sony Pictures" to "🎥 Sony Pictures Classics",
+        "Studio Ghibli" to "🍃 Studio Ghibli Magic",
+        "Time Travel" to "⏳ Time Travel Adventures",
+        "Vampire" to "🧛 Vampires & Dracula",
+        "Zombie" to "🧟 Zombie Apocalypse",
+        "Alien" to "👽 Alien & Space Invaders",
+        "Heist" to "💰 Heists & Robberies",
+        "Assassin" to "🔫 Assassins & Hitmen",
+        "Post Apocalyptic" to "☢️ Post-Apocalyptic Worlds",
+        "Coming of Age" to "🎓 Coming of Age"
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
             bypassResult = bypass(mainUrl)
         }
 
         val rows = ArrayList<HomePageList>()
-        val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
 
+        // Fetch dynamic rows using NetMirror's search engine across all OTTs
+        // We shuffle the queries so the homepage looks different every time you open it
+        for ((query, rowName) in smartQueries.shuffled().take(8)) {
+            val items = ArrayList<SearchResponse>()
+            
+            for (o in otts) {
+                try {
+                    val results = app.get(
+                        "$mainUrl/mobile/${o.path}search.php?s=$query&t=${APIHolder.unixTime}",
+                        referer = "$mainUrl/home",
+                        cookies = cookies(o.code)
+                    ).parsed<SearchData>().searchResult
+
+                    results.forEach { r ->
+                        items.add(newAnimeSearchResponse(r.t, Ref(r.id, o.code).toJson()) {
+                            this.posterUrl = posterUrl(o.code, r.id)
+                            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                        })
+                    }
+                } catch (e: Exception) {}
+            }
+
+            if (items.isNotEmpty()) {
+                rows.add(HomePageList("$rowName (${items.size})", items.shuffled().take(60)))
+            }
+        }
+
+        // Also add a few rows from local storage (Recently Added & Top Movies)
+        val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
         for (o in otts) {
             NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
                 allRecords.add(Triple(o.code, id, rec))
             }
         }
 
-        // 1. Smart Franchise Rows (Keyword Matching)
-        val franchises = mapOf(
-            "🤖 Transformers Universe" to listOf("transformers", "bumblebee", "optimus", "megatron"),
-            "🦇 Batman & Gotham" to listOf("batman", "dark knight", "joker", "gotham", "penguin"),
-            "🕷️ Spider-Man & Multiverse" to listOf("spider-man", "spiderman", "venom", "morbius", "madame web"),
-            "🧙‍♂️ Wizarding World (Harry Potter)" to listOf("harry potter", "fantastic beasts", "hogwarts", "dumbledore", "voldemort"),
-            "⚔️ Middle Earth (Lord of the Rings)" to listOf("lord of the rings", "the hobbit", "gandalf", "middle earth", "aragorn"),
-            "🚀 Star Wars Galaxy" to listOf("star wars", "mandalorian", "skywalker", "yoda", "boba fett", "ahsoka"),
-            "🏎️ Fast & Furious" to listOf("fast and furious", "fast & furious", "dom toretto", "hobbs", "shaw"),
-            "🦇 Vampires & Werewolves" to listOf("vampire", "werewolf", "dracula", "twilight", "underworld", "blade"),
-            "🤠 Marvel Universe" to listOf("avengers", "marvel", "iron man", "captain america", "thor", "hulk", "black panther", "deadpool", "wolverine", "x-men"),
-            "🦸 DC Universe" to listOf("superman", "wonder woman", "aquaman", "flash", "justice league", "green lantern"),
-            "🦖 Monsters & Kaiju" to listOf("godzilla", "king kong", "monster", "kaiju", "pacific rim"),
-            "🔪 SAW & Conjuring (Horror Franchises)" to listOf("saw", "conjuring", "annabelle", "nun", "insidious", "paranormal")
-        )
+        val recent = allRecords.filter { it.third.n.isNotEmpty() }
+            .sortedByDescending { it.third.ts }
+            .take(60)
+            .map { (ott, id, rec) -> card(ott, id, rec.n) }
 
-        for ((franchiseName, keywords) in franchises) {
-            val items = allRecords.filter { (_, _, rec) ->
-                rec.n.isNotEmpty() && keywords.any { kw -> rec.n.lowercase().contains(kw) }
-            }.map { (ott, id, rec) -> card(ott, id, rec.n) }
-
-            if (items.size >= 3) {
-                rows.add(HomePageList("$franchiseName (${items.size})", items.shuffled().take(60)))
-            }
+        if (recent.size >= 5) {
+            rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
         }
 
-        // 2. Smart Genre Mashups (Mood based)
-        val mashups = mapOf(
-            "😂 Action Comedies" to listOf("action", "comedy"),
-            "👻 Horror Comedies" to listOf("horror", "comedy"),
-            "🚀 Sci-Fi Thrillers" to listOf("sci-fi", "thriller"),
-            "💖 Romantic Dramas" to listOf("romance", "drama"),
-            "🔪 Crime Thrillers" to listOf("crime", "thriller")
-        )
-
-        for ((moodName, requiredGenres) in mashups) {
-            val items = allRecords.filter { (_, _, rec) ->
-                val recGenres = rec.g.map { it.lowercase() }
-                requiredGenres.all { rg -> recGenres.any { it.contains(rg) } }
-            }.map { (ott, id, rec) -> card(ott, id, rec.n) }
-
-            if (items.size >= 5) {
-                rows.add(HomePageList("$moodName (${items.size})", items.shuffled().take(60)))
-            }
-        }
-
-        // 3. High Rated (Requires Score in CatalogRecord - fallback to year if not available)
-        // Since we don't parse match score in the crawler, we'll do a "Recent Sci-Fi" grouping
-        val recentSciFi = allRecords.filter { (_, _, rec) ->
-            rec.y.toIntOrNull()?.let { it >= 2020 } ?: false &&
-            rec.g.any { it.lowercase().contains("sci-fi") }
-        }.map { (ott, id, rec) -> card(ott, id, rec.n) }
-
-        if (recentSciFi.size >= 5) {
-            rows.add(HomePageList("🚀 Recent Sci-Fi (2020s) (${recentSciFi.size})", recentSciFi.shuffled().take(60)))
+        val movies = allRecords.filter { it.third.t == "m" && it.third.n.isNotEmpty() }
+            .map { (ott, id, rec) -> card(ott, id, rec.n) }
+        if (movies.size >= 5) {
+            rows.add(HomePageList("🎬 All Movies (${movies.size})", movies.shuffled().take(60)))
         }
 
         return newHomePageResponse(rows, false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return emptyList() // Search is handled by main providers
+        return emptyList()
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -174,25 +179,29 @@ class ExperimentalCatalogProvider : MainAPI() {
         val chips = genre + langs.map { "${flagFor(it)} $it" }
 
         // --- SMART LOCAL RECOMMENDATIONS ---
-        // Instead of using NetMirror's random suggestions, we search our local database
-        // for movies that share the same genre or a keyword in the title.
+        // We look for exact title keyword matches (length > 4 to avoid "The", "A")
+        // AND we ensure the genre matches exactly (case-insensitive).
         val localRecs = ArrayList<SearchResponse>()
-        val titleKeywords = title.split(" ").filter { it.length > 3 } // Ignore small words like "The", "A"
+        val titleKeywords = title.split(" ").filter { it.length > 4 }.map { it.lowercase() }
         
         for ((recId, rec) in NetflixMirrorStorage.getAll(ottCode)) {
-            if (recId == id) continue // Skip current movie
+            if (recId == id) continue
             if (rec.n.isEmpty()) continue
 
-            val sharesGenre = rec.g.any { rg -> genre.any { it.equals(rg, ignoreCase = true) } }
-            val sharesKeyword = titleKeywords.any { kw -> rec.n.contains(kw, ignoreCase = true) }
+            val recTitleLower = rec.n.lowercase()
+            val recGenresLower = rec.g.map { it.lowercase() }
+            
+            val sharesGenre = genre.any { g -> recGenresLower.contains(g.lowercase()) }
+            val sharesKeyword = titleKeywords.any { kw -> recTitleLower.contains(kw) }
 
-            if (sharesGenre || sharesKeyword) {
+            // Require BOTH a keyword match AND a genre match to prevent false positives
+            if (sharesGenre && sharesKeyword) {
                 localRecs.add(card(ottCode, recId, rec.n))
             }
-            if (localRecs.size >= 20) break // Limit to 20 recommendations
+            if (localRecs.size >= 20) break
         }
 
-        // Use local smart recs if we found any, otherwise fallback to NetMirror's suggestions
+        // Fallback to NetMirror's suggestions if smart local recs fail
         val suggest = if (localRecs.isNotEmpty()) localRecs else data.suggest?.map { card(ottCode, it.id) }
 
         val isMovie = data.episodes.first() == null
