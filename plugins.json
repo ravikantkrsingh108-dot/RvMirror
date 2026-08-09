@@ -1,10 +1,8 @@
 [
     {
         "iconUrl": "https://hdghartv.cc/favicon.png",
-        "fileHash": "sha256-323f247d42e00cde41fcaccb23aaceb082aa53400c9be596470a70134c4670a1",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
-        "fileSize": 34782,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -14,7 +12,7 @@
             "Movie",
             "TvSeries"
         ],
-        "version": 3,
+        "version": 4,
         "internalName": "HDGharTV",
         "description": "Watch Movies and Series on HDGharTV",
         "url": "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/builds/HDGharTV.cs3",
@@ -22,10 +20,8 @@
     },
     {
         "iconUrl": "https://raw.githubusercontent.com/ravikantkrsingh108-dot/RvMirror/refs/heads/main/Logos/ReflexMirror-icon.png",
-        "fileHash": "sha256-25d7716c2302dd4ce2449ca073d8b16c60fee65fa5f26b1e86966bb12201e50c",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/ravikantkrsingh108-dot/RvMirror",
-        "fileSize": 146545,
         "status": 1,
         "language": "en",
         "authors": [
