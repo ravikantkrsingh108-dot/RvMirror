@@ -21,5 +21,5 @@ cloudstream {
         "TvSeries"
     )
     requiresResources = false
-    iconUrl = "https://www.google.com/s2/favicons?domain=hdghartv.cc&sz=%size%"
+    iconUrl = "https://hdghartv.cc/favicon.png"
 }
