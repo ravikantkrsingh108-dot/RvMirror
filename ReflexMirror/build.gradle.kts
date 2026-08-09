@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 10 // Bumped to 10
+version = 11 // Bumped to 11
 
 android {
     buildFeatures {
