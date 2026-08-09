@@ -118,52 +118,58 @@ class HDGharTVProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val lists = mutableListOf<HomePageList>()
         val base = apiBase()
+        var hasNext = false
 
         try {
             when (request.data) {
                 "movies" -> {
-                    // Bumped limit to 10000 to fetch all content
-                    val res = app.get("$base/api/movies/public?page=$page&limit=10000", referer = "$base/")
+                    // Using limit=50 to prevent server errors, relying on pagination instead
+                    val res = app.get("$base/api/movies/public?page=$page&limit=50", referer = "$base/")
                     val parsed = parseJson<MediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
                     if (items.isNotEmpty()) {
-                        // Added count to label and randomized items
-                        lists.add(HomePageList("Movies (${parsed.total ?: items.size})", items.shuffled(), isHorizontalImages = false))
+                        // Added "Page X" to label so you know more is loading
+                        lists.add(HomePageList("Movies (Page $page)", items.shuffled(), isHorizontalImages = false))
                     }
+                    // Tell CloudStream to load page 2, 3, etc. when you scroll down
+                    hasNext = page < (parsed.totalPages ?: 1)
                 }
                 "series" -> {
-                    // Bumped limit to 10000 to fetch all content
-                    val res = app.get("$base/api/series/public?page=$page&limit=10000", referer = "$base/")
+                    val res = app.get("$base/api/series/public?page=$page&limit=50", referer = "$base/")
                     val parsed = parseJson<MediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("series") } ?: emptyList()
                     if (items.isNotEmpty()) {
-                        // Added count to label and randomized items
-                        lists.add(HomePageList("Series (${parsed.total ?: items.size})", items.shuffled(), isHorizontalImages = false))
+                        lists.add(HomePageList("Series (Page $page)", items.shuffled(), isHorizontalImages = false))
                     }
+                    hasNext = page < (parsed.totalPages ?: 1)
                 }
                 "featured" -> {
-                    val res = app.get("$base/api/featured/public", referer = "$base/")
-                    val parsed = parseJson<List<FeaturedItem>>(res.text)
-                    val items = parsed.mapNotNull { f ->
-                        val id = f.sourceId ?: return@mapNotNull null
-                        val title = f.title ?: return@mapNotNull null
-                        val type = if (f.type == "series") "series" else "movie"
-                        val loadData = LoadData(id = id, type = type, title = title, posterUrl = f.posterPath)
-                        newMovieSearchResponse(title, loadData.toJson(), if (type == "series") TvType.TvSeries else TvType.Movie) {
-                            this.posterUrl = f.posterPath
+                    // Featured doesn't have pagination, so we only load it on page 1
+                    if (page == 1) {
+                        val res = app.get("$base/api/featured/public", referer = "$base/")
+                        val parsed = parseJson<List<FeaturedItem>>(res.text)
+                        val items = parsed.mapNotNull { f ->
+                            val id = f.sourceId ?: return@mapNotNull null
+                            val title = f.title ?: return@mapNotNull null
+                            val type = if (f.type == "series") "series" else "movie"
+                            val loadData = LoadData(id = id, type = type, title = title, posterUrl = f.posterPath)
+                            newMovieSearchResponse(title, loadData.toJson(), if (type == "series") TvType.TvSeries else TvType.Movie) {
+                                this.posterUrl = f.posterPath
+                            }
+                        }.shuffled()
+                        
+                        if (items.isNotEmpty()) {
+                            lists.add(HomePageList("Featured (${items.size})", items, isHorizontalImages = false))
                         }
-                    }.shuffled() // Randomized
-                    
-                    if (items.isNotEmpty()) {
-                        lists.add(HomePageList("Featured (${items.size})", items, isHorizontalImages = false))
                     }
+                    hasNext = false
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "getMainPage: ${e.message}")
         }
 
-        return newHomePageResponse(lists, hasNext = false)
+        return newHomePageResponse(lists, hasNext = hasNext)
     }
 
     private fun MediaItem.toSearchResponse(type: String): SearchResponse? {
@@ -181,8 +187,8 @@ class HDGharTVProvider : MainAPI() {
         val results = mutableListOf<SearchResponse>()
 
         try {
-            // Bumped limit to 10000 for search as well
-            val res = app.get("$base/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&limit=10000", referer = "$base/")
+            // Using limit=100 for search to get more results without crashing the API
+            val res = app.get("$base/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&limit=100", referer = "$base/")
             val parsed = parseJson<ApiSearchResponse>(res.text)
             parsed.movies?.forEach { m -> m.toSearchResponse("movie")?.let { results.add(it) } }
             parsed.series?.forEach { s -> s.toSearchResponse("series")?.let { results.add(it) } }
