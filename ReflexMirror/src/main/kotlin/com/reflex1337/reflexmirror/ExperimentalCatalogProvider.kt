@@ -22,7 +22,7 @@ class ExperimentalCatalogProvider : MainAPI() {
     private var bypassResult: BypassResult? = null
     private val headers = BROWSER_HEADERS
 
-    private fun cookies(ott: String): Map<String, String> {
+    private fun cookies(ott: String, studio: String = ""): Map<String, String> {
         val c = mutableMapOf(
             "t_hash_t" to (bypassResult?.cookie ?: ""),
             "hd" to "on",
@@ -30,13 +30,14 @@ class ExperimentalCatalogProvider : MainAPI() {
         )
         bypassResult?.addhash?.takeIf { it.isNotEmpty() }?.let { c["addhash"] = it }
         bypassResult?.usertoken?.takeIf { it.isNotEmpty() }?.let { c["usertoken"] = it }
+        if (studio.isNotEmpty()) c["studio"] = studio
         return c
     }
 
     private fun posterUrl(o: String, id: String): String {
         val prefix = when(o) {
             "pv" -> "pv/v"
-            "hs" -> "hs/v"
+            "hs", "dp" -> "hs/v" // Hotstar and Disney use the same poster path
             else -> "poster/v"
         }
         return "https://imgcdn.kim/$prefix/$id.jpg"
@@ -48,11 +49,16 @@ class ExperimentalCatalogProvider : MainAPI() {
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
 
-    private data class OttInfo(val code: String, val label: String, val path: String)
-    private val otts = listOf(
-        OttInfo("nf", "Netflix", ""),
-        OttInfo("pv", "Prime Video", "pv/"),
-        OttInfo("hs", "Hotstar", "hs/")
+    // List of all OTT platforms and Sub-studios to scrape
+    private data class HomePageConfig(val code: String, val label: String, val studio: String)
+    private val homePages = listOf(
+        HomePageConfig("nf", "Netflix", ""),
+        HomePageConfig("pv", "Prime Video", ""),
+        HomePageConfig("hs", "Hotstar", ""),
+        HomePageConfig("dp", "Disney", "disney"),
+        HomePageConfig("dp", "Marvel", "marvel"),
+        HomePageConfig("dp", "Star Wars", "starwars"),
+        HomePageConfig("dp", "Pixar", "pixar")
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -62,12 +68,12 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         val rows = ArrayList<HomePageList>()
 
-        // 1. Scrape NetMirror's native curated lists from the HTML homepage
-        for (o in otts) {
+        // 1. Scrape NetMirror's native curated lists for ALL platforms
+        for (config in homePages) {
             try {
                 val doc = app.get(
-                    "$mainUrl/mobile/${o.path}home?app=1",
-                    cookies = cookies(o.code),
+                    "$mainUrl/mobile/home?app=1",
+                    cookies = cookies(config.code, config.studio),
                     headers = headers,
                     referer = "$mainUrl/mobile/home?app=1"
                 ).document
@@ -76,10 +82,10 @@ class ExperimentalCatalogProvider : MainAPI() {
                     val rowName = element.select("h2, span").text()
                     if (rowName.isNotBlank()) {
                         val items = element.select("article, .top10-post").mapNotNull { 
-                            it.toSearchResult(o.code, o.label) 
+                            it.toSearchResult(config.code) 
                         }
                         if (items.isNotEmpty()) {
-                            rows.add(HomePageList("[${o.label}] $rowName", items))
+                            rows.add(HomePageList("[${config.label}] $rowName", items))
                         }
                     }
                 }
@@ -88,9 +94,9 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         // 2. Fetch "Recently Added" from local storage
         val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
-        for (o in otts) {
-            NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
-                allRecords.add(Triple(o.code, id, rec))
+        for (o in listOf("nf", "pv", "hs")) {
+            NetflixMirrorStorage.getAll(o).forEach { (id, rec) ->
+                allRecords.add(Triple(o, id, rec))
             }
         }
         val recent = allRecords.filter { it.third.n.isNotEmpty() }
@@ -102,7 +108,7 @@ class ExperimentalCatalogProvider : MainAPI() {
         return newHomePageResponse(rows, false)
     }
 
-    private fun Element.toSearchResult(ott: String, label: String): SearchResponse? {
+    private fun Element.toSearchResult(ott: String): SearchResponse? {
         val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
         if (id.isBlank()) return null
 
@@ -124,7 +130,7 @@ class ExperimentalCatalogProvider : MainAPI() {
         val ottCode = ref.ott
         val path = when(ottCode) {
             "pv" -> "pv/"
-            "hs" -> "hs/"
+            "hs", "dp" -> "hs/" // Disney uses Hotstar paths
             else -> ""
         }
         val id = ref.id
@@ -295,7 +301,7 @@ class ExperimentalCatalogProvider : MainAPI() {
         val ld = parseJson<LoadData>(data)
         val playlistPath = when(ld.ott) {
             "pv" -> "pv/playlist.php"
-            "hs" -> "hs/playlist.php"
+            "hs", "dp" -> "hs/playlist.php"
             else -> "playlist.php"
         }
 
