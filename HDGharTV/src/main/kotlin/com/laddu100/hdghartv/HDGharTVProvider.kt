@@ -119,32 +119,35 @@ class HDGharTVProvider : MainAPI() {
         val lists = mutableListOf<HomePageList>()
         val base = apiBase()
         var hasNext = false
+        val limit = 50
 
         try {
             when (request.data) {
                 "movies" -> {
-                    // Using limit=50 to prevent server errors, relying on pagination instead
-                    val res = app.get("$base/api/movies/public?page=$page&limit=50", referer = "$base/")
+                    val res = app.get("$base/api/movies/public?page=$page&limit=$limit", referer = "$base/")
                     val parsed = parseJson<MediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
                     if (items.isNotEmpty()) {
-                        // Added "Page X" to label so you know more is loading
-                        lists.add(HomePageList("Movies (Page $page)", items.shuffled(), isHorizontalImages = false))
+                        // Use total count for the label
+                        val totalCount = parsed.total ?: items.size
+                        lists.add(HomePageList("Movies ($totalCount)", items.shuffled(), isHorizontalImages = false))
                     }
-                    // Tell CloudStream to load page 2, 3, etc. when you scroll down
-                    hasNext = page < (parsed.totalPages ?: 1)
+                    // Fix pagination math so it auto-loads page 2, 3, etc.
+                    val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
+                    hasNext = page < totalPages
                 }
                 "series" -> {
-                    val res = app.get("$base/api/series/public?page=$page&limit=50", referer = "$base/")
+                    val res = app.get("$base/api/series/public?page=$page&limit=$limit", referer = "$base/")
                     val parsed = parseJson<MediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("series") } ?: emptyList()
                     if (items.isNotEmpty()) {
-                        lists.add(HomePageList("Series (Page $page)", items.shuffled(), isHorizontalImages = false))
+                        val totalCount = parsed.total ?: items.size
+                        lists.add(HomePageList("Series ($totalCount)", items.shuffled(), isHorizontalImages = false))
                     }
-                    hasNext = page < (parsed.totalPages ?: 1)
+                    val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
+                    hasNext = page < totalPages
                 }
                 "featured" -> {
-                    // Featured doesn't have pagination, so we only load it on page 1
                     if (page == 1) {
                         val res = app.get("$base/api/featured/public", referer = "$base/")
                         val parsed = parseJson<List<FeaturedItem>>(res.text)
@@ -187,11 +190,21 @@ class HDGharTVProvider : MainAPI() {
         val results = mutableListOf<SearchResponse>()
 
         try {
-            // Using limit=100 for search to get more results without crashing the API
-            val res = app.get("$base/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&limit=100", referer = "$base/")
-            val parsed = parseJson<ApiSearchResponse>(res.text)
-            parsed.movies?.forEach { m -> m.toSearchResponse("movie")?.let { results.add(it) } }
-            parsed.series?.forEach { s -> s.toSearchResponse("series")?.let { results.add(it) } }
+            // HDGharTV API caps search at 20 per page. We loop through 5 pages to get up to 100 results.
+            for (page in 1..5) {
+                val res = app.get("$base/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&page=$page", referer = "$base/")
+                val parsed = parseJson<ApiSearchResponse>(res.text)
+                
+                val movies = parsed.movies
+                val series = parsed.series
+                
+                if (movies.isNullOrEmpty() && series.isNullOrEmpty()) break
+                
+                movies?.forEach { m -> m.toSearchResponse("movie")?.let { results.add(it) } }
+                series?.forEach { s -> s.toSearchResponse("series")?.let { results.add(it) } }
+                
+                if ((movies?.size ?: 0) < 20 && (series?.size ?: 0) < 20) break
+            }
         } catch (e: Exception) {
             Log.e(TAG, "search: ${e.message}")
         }
