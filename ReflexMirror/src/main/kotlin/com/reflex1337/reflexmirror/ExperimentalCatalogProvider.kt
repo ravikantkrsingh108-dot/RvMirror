@@ -9,13 +9,11 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import okhttp3.Interceptor
 import okhttp3.Response
+import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.APIHolder.unixTime
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 
 class ExperimentalCatalogProvider : MainAPI() {
-    override var name = "NetMirror Premium (TMDB)"
+    override var name = "NetMirror Smart (Experimental)"
     override var mainUrl = "https://net52.cc"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries, TvType.Anime, TvType.AsianDrama)
     override var lang = "en"
@@ -23,10 +21,6 @@ class ExperimentalCatalogProvider : MainAPI() {
 
     private var bypassResult: BypassResult? = null
     private val headers = BROWSER_HEADERS
-
-    // PASTE YOUR TMDB API KEY HERE
-    private val tmdbApiKey = "a39a5db3f106797c36ec426da8b94095" 
-    private val tmdbUrl = "https://api.themoviedb.org/3"
 
     private fun cookies(ott: String): Map<String, String> {
         val c = mutableMapOf(
@@ -61,56 +55,6 @@ class ExperimentalCatalogProvider : MainAPI() {
         OttInfo("hs", "Hotstar", "hs/")
     )
 
-    // Data classes for TMDB API response
-    data class TmdbResponse(val results: List<TmdbItem>? = null)
-    data class TmdbItem(val id: Int, val title: String? = null, val name: String? = null, val release_date: String? = null, val first_air_date: String? = null)
-
-    // Helper to clean titles for better matching (e.g., "Batman: The Dark Knight" -> "batmanthedarkknight")
-    private fun cleanTitle(title: String): String {
-        return title.lowercase()
-            .replace(" ", "")
-            .replace(":", "")
-            .replace("-", "")
-            .replace(".", "")
-            .trim()
-    }
-
-    // Fetches a list from TMDB and cross-references with local storage
-    private suspend fun fetchTmdbRow(rowName: String, endpoint: String): HomePageList? {
-        if (tmdbApiKey == "YOUR_TMDB_KEY") return null // Don't fetch if key is missing
-        try {
-            val tmdbData = app.get("$tmdbUrl$endpoint?api_key=$tmdbApiKey&language=en-US").parsed<TmdbResponse>()
-            val items = ArrayList<SearchResponse>()
-            val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
-
-            for (o in otts) {
-                NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
-                    allRecords.add(Triple(o.code, id, rec))
-                }
-            }
-
-            for (tmdbItem in tmdbData.results ?: emptyList()) {
-                val tmdbTitle = tmdbItem.title ?: tmdbItem.name ?: continue
-                val tmdbYear = (tmdbItem.release_date ?: tmdbItem.first_air_date ?: "").substringBefore("-")
-                val cleanTmdbTitle = cleanTitle(tmdbTitle)
-
-                // Find a match in local storage (ignoring spaces/punctuation)
-                val match = allRecords.find { (_, _, rec) ->
-                    val cleanRecTitle = cleanTitle(rec.n)
-                    cleanRecTitle == cleanTmdbTitle && (rec.y == tmdbYear || rec.y.isEmpty() || tmdbYear.isEmpty())
-                }
-
-                if (match != null) {
-                    items.add(card(match.first, match.second, match.third.n))
-                }
-            }
-
-            return if (items.size >= 3) HomePageList("$rowName (${items.size})", items.shuffled().take(60)) else null
-        } catch (e: Exception) {
-            return null
-        }
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (bypassResult == null || bypassResult?.cookie.isNullOrBlank()) {
             bypassResult = bypass(mainUrl)
@@ -118,7 +62,31 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         val rows = ArrayList<HomePageList>()
 
-        // 1. Local Recently Added
+        // 1. Scrape NetMirror's native curated lists from the HTML homepage
+        for (o in otts) {
+            try {
+                val doc = app.get(
+                    "$mainUrl/mobile/${o.path}home?app=1",
+                    cookies = cookies(o.code),
+                    headers = headers,
+                    referer = "$mainUrl/mobile/home?app=1"
+                ).document
+
+                doc.select(".tray-container, #top10").forEach { element ->
+                    val rowName = element.select("h2, span").text()
+                    if (rowName.isNotBlank()) {
+                        val items = element.select("article, .top10-post").mapNotNull { 
+                            it.toSearchResult(o.code, o.label) 
+                        }
+                        if (items.isNotEmpty()) {
+                            rows.add(HomePageList("[${o.label}] $rowName", items))
+                        }
+                    }
+                }
+            } catch (e: Exception) {}
+        }
+
+        // 2. Fetch "Recently Added" from local storage
         val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
         for (o in otts) {
             NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
@@ -129,34 +97,19 @@ class ExperimentalCatalogProvider : MainAPI() {
             .sortedByDescending { it.third.ts }
             .take(60)
             .map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (recent.size >= 5) rows.add(HomePageList("🆕 Recently Added (${recent.size})", recent))
-
-        // 2. TMDB Curated Lists (Using standard TMDB API endpoints)
-        // No need to create lists manually, these pull directly from TMDB's database
-        val tmdbEndpoints = mapOf(
-            "🔥 Trending Movies" to "/trending/movie/week",
-            "⭐ Top Rated Movies" to "/movie/top_rated",
-            "🎭 Top Comedies" to "/discover/movie?with_genres=35&sort_by=popularity.desc",
-            "🚀 Top Sci-Fi" to "/discover/movie?with_genres=878&sort_by=popularity.desc",
-            "🔪 Top Horror" to "/discover/movie?with_genres=27&sort_by=popularity.desc",
-            "⚔️ Top Action" to "/discover/movie?with_genres=28&sort_by=popularity.desc"
-        )
-
-        // Fetch TMDB rows in parallel for speed
-        val tmdbJobs = tmdbEndpoints.map { (name, endpoint) ->
-            coroutineScope {
-                async { fetchTmdbRow(name, endpoint) }
-            }
-        }.awaitAll()
-
-        tmdbJobs.filterNotNull().forEach { rows.add(it) }
-
-        // 3. Local All Movies/Series Fallback
-        val movies = allRecords.filter { it.third.t == "m" && it.third.n.isNotEmpty() }
-            .map { (ott, id, rec) -> card(ott, id, rec.n) }
-        if (movies.size >= 5) rows.add(HomePageList("🎬 All Local Movies (${movies.size})", movies.shuffled().take(60)))
+        if (recent.size >= 5) rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
 
         return newHomePageResponse(rows, false)
+    }
+
+    private fun Element.toSearchResult(ott: String, label: String): SearchResponse? {
+        val id = selectFirst("a")?.attr("data-post") ?: attr("data-post")
+        if (id.isBlank()) return null
+
+        return newAnimeSearchResponse("", Ref(id, ott).toJson()) {
+            this.posterUrl = posterUrl(ott, id)
+            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+        }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -176,6 +129,7 @@ class ExperimentalCatalogProvider : MainAPI() {
         }
         val id = ref.id
 
+        // Fetch raw text to inspect exactly what NetMirror is returning
         val text = app.get(
             "$mainUrl/mobile/${path}post.php?id=$id&t=${APIHolder.unixTime}",
             headers,
@@ -204,49 +158,12 @@ class ExperimentalCatalogProvider : MainAPI() {
 
         val chips = genre + langs.map { "${flagFor(it)} $it" }
 
-        // --- TMDB RECOMMENDATIONS ---
-        val localRecs = ArrayList<SearchResponse>()
-        if (tmdbApiKey != "YOUR_TMDB_KEY") {
-            try {
-                // 1. Search TMDB for the current movie to get TMDB ID
-                val searchUrl = "$tmdbUrl/search/movie?api_key=$tmdbApiKey&query=${java.net.URLEncoder.encode(title, "UTF-8")}&year=${data.year}"
-                val searchResp = app.get(searchUrl).parsed<TmdbResponse>()
-                val tmdbId = searchResp.results?.firstOrNull()?.id
-
-                if (tmdbId != null) {
-                    // 2. Get TMDB Recommendations
-                    val recUrl = "$tmdbUrl/movie/$tmdbId/recommendations?api_key=$tmdbApiKey"
-                    val recResp = app.get(recUrl).parsed<TmdbResponse>()
-
-                    // 3. Cross-reference TMDB recommendations with local storage
-                    val allRecords = mutableListOf<Triple<String, String, CatalogRecord>>()
-                    for (o in otts) {
-                        NetflixMirrorStorage.getAll(o.code).forEach { (id, rec) ->
-                            allRecords.add(Triple(o.code, id, rec))
-                        }
-                    }
-
-                    for (tmdbRec in recResp.results ?: emptyList()) {
-                        val recTitle = tmdbRec.title ?: tmdbRec.name ?: continue
-                        val recYear = (tmdbRec.release_date ?: tmdbRec.first_air_date ?: "").substringBefore("-")
-                        val cleanRecTmdbTitle = cleanTitle(recTitle)
-
-                        val match = allRecords.find { (_, _, rec) ->
-                            val cleanRecTitle = cleanTitle(rec.n)
-                            cleanRecTitle == cleanRecTmdbTitle && (rec.y == recYear || rec.y.isEmpty() || recYear.isEmpty())
-                        }
-
-                        if (match != null) {
-                            localRecs.add(card(match.first, match.second, match.third.n))
-                        }
-                        if (localRecs.size >= 20) break
-                    }
-                }
-            } catch (e: Exception) {}
+        val suggest = data.suggest?.map {
+            newAnimeSearchResponse("", Ref(it.id, ottCode).toJson()) {
+                this.posterUrl = posterUrl(ottCode, it.id)
+                posterHeaders = mapOf("Referer" to "$mainUrl/home")
+            }
         }
-
-        // Use TMDB recs if found, otherwise fallback to NetMirror's suggestions
-        val suggest = if (localRecs.isNotEmpty()) localRecs else data.suggest?.map { card(ottCode, it.id) }
 
         val isMovie = data.episodes.first() == null
         if (isMovie) {
@@ -273,11 +190,16 @@ class ExperimentalCatalogProvider : MainAPI() {
         NetflixMirrorStorage.addBareIds(ottCode, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
+        
+        // --- EXPERIMENTAL PLOT ---
+        // We append the raw JSON string to the plot so you can see exactly what NetMirror is providing.
+        val experimentalPlot = "${data.desc?.trim() ?: ""}\n\n--- EXPERIMENTAL RAW DATA ---\n$text"
+
         return newTvSeriesLoadResponse(title, url, type, episodes) {
             posterUrl = posterUrl(ottCode, id)
             backgroundPosterUrl = posterUrl(ottCode, id)
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
-            plot = data.desc?.trim()?.ifBlank { null }
+            plot = experimentalPlot // Injected raw JSON here
             year = data.year.toIntOrNull()
             tags = chips
             actors = people
