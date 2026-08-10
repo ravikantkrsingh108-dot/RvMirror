@@ -16,7 +16,7 @@ class HDGharTVProvider : MainAPI() {
     override var name = "HDGharTV"
     override var lang = "hi"
     override val hasMainPage = true
-    override val hasDownloadSupport = false
+    override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     private val fallbackApiBase = "https://hdghartv.cc"
@@ -71,6 +71,8 @@ class HDGharTVProvider : MainAPI() {
         @JsonProperty("voteAverage") val voteAverage: Double? = null,
         @JsonProperty("runtime") val runtime: Int? = null,
         @JsonProperty("status") val status: String? = null,
+        @JsonProperty("certification") val certification: String? = null, // Added for UA, US NR
+        @JsonProperty("contentRating") val contentRating: String? = null, // Fallback field
         @JsonProperty("productionCountries") val productionCountries: List<ProductionCountry>? = null,
         @JsonProperty("spokenLanguages") val spokenLanguages: List<SpokenLanguage>? = null,
         @JsonProperty("streamingLinks") val streamingLinks: List<StreamLink>? = null,
@@ -167,8 +169,8 @@ class HDGharTVProvider : MainAPI() {
                     .mapNotNull { it.first.toSearchResponse(it.second) }
                 if (korean.isNotEmpty()) lists.add(HomePageList("🇰🇷 Korean (${korean.size})", korean.shuffled(), isHorizontalImages = false))
 
-                // 5. Featured
-                val featuredRes = app.get("$base/api/featured/public", referer = "$base/")
+                // 5. Featured (Added limit=1000 to fetch all featured items)
+                val featuredRes = app.get("$base/api/featured/public?page=1&limit=1000", referer = "$base/")
                 val featuredParsed = parseJson<List<FeaturedItem>>(featuredRes.text)
                 val featuredItems = featuredParsed.mapNotNull { f ->
                     val id = f.sourceId ?: return@mapNotNull null
@@ -190,7 +192,6 @@ class HDGharTVProvider : MainAPI() {
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
                     if (items.isNotEmpty()) {
                         val totalCount = parsed.total ?: items.size
-                        // Fixed "ovies" typo here
                         lists.add(HomePageList("Movies ($totalCount)", items.shuffled(), isHorizontalImages = false))
                     }
                     val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
@@ -281,8 +282,9 @@ class HDGharTVProvider : MainAPI() {
                         this.plot = movie.overview
                         this.year = movie.releaseDate?.substring(0, 4)?.toIntOrNull()
                         this.tags = tags
-                        this.duration = movie.runtime // Duration in minutes
+                        this.duration = movie.runtime
                         this.score = movie.voteAverage?.let { Score.from10(it.toString()) }
+                        this.contentRating = movie.certification ?: movie.contentRating // Added content rating
                     }
                 }
                 "series" -> {
@@ -324,6 +326,7 @@ class HDGharTVProvider : MainAPI() {
                         this.year = series.firstAirDate?.substring(0, 4)?.toIntOrNull()
                         this.tags = tags
                         this.score = series.voteAverage?.let { Score.from10(it.toString()) }
+                        this.contentRating = series.certification ?: series.contentRating // Added content rating
                     }
                 }
                 else -> null
