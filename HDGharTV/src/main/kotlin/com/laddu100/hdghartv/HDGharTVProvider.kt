@@ -135,10 +135,10 @@ class HDGharTVProvider : MainAPI() {
 
         try {
             if (page == 1) {
-                // Fetch a large batch on page 1 to populate custom categories
-                val moviesRes = app.get("$base/api/movies/public?page=1&limit=100", referer = "$base/").text
+                // Fetch a massive batch (1000) on page 1 to populate all custom categories accurately
+                val moviesRes = app.get("$base/api/movies/public?page=1&limit=1000", referer = "$base/").text
                 val moviesParsed = parseJson<MediaListResponse>(moviesRes)
-                val seriesRes = app.get("$base/api/series/public?page=1&limit=100", referer = "$base/").text
+                val seriesRes = app.get("$base/api/series/public?page=1&limit=1000", referer = "$base/").text
                 val seriesParsed = parseJson<MediaListResponse>(seriesRes)
 
                 val allMovies = moviesParsed.data ?: emptyList()
@@ -190,7 +190,8 @@ class HDGharTVProvider : MainAPI() {
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
                     if (items.isNotEmpty()) {
                         val totalCount = parsed.total ?: items.size
-                        lists.add(HomePageList("ovies ($totalCount)", items.shuffled(), isHorizontalImages = false))
+                        // Fixed "ovies" typo here
+                        lists.add(HomePageList("Movies ($totalCount)", items.shuffled(), isHorizontalImages = false))
                     }
                     val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
                     hasNext = page < totalPages
