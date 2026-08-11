@@ -7,5 +7,6 @@ import com.lagradost.cloudstream3.plugins.Plugin
 class HDGharTVPlugin : Plugin() {
     override fun load() {
         registerMainAPI(HDGharTVProvider())
+        registerMainAPI(HDGharTVSmartProvider())
     }
 }
