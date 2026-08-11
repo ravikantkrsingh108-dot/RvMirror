@@ -152,14 +152,12 @@ class HDGharTVSmartProvider : MainAPI() {
                         val moviesParsed = parseJson<MediaListResponse>(moviesRes)
                         val seriesRes = app.get("$base/api/series/public?page=1&limit=50", referer = "$base/").text
                         val seriesParsed = parseJson<MediaListResponse>(seriesRes)
+                        val trandingRes = app.get("$base/api/Tranding/public?page=1&limit=50", referer = "$base/").text
+                        val trandingParsed = parseJson<MediaListResponse>(trandingRes)
 
                         val allMedia = (moviesParsed.data ?: emptyList()).map { it to "movie" } + 
-                                       (seriesParsed.data ?: emptyList()).map { it to "series" }
-
-                        // 3. Trending Now (High Rating)
-                        val trending = allMedia.filter { (it.first.voteAverage ?: 0.0) >= 7.0 }
-                            .mapNotNull { it.first.toSearchResponse(it.second) }
-                        if (trending.isNotEmpty()) lists.add(HomePageList("🔥 Trending Now (${trending.size})", trending.shuffled(), isHorizontalImages = false))
+                                       (seriesParsed.data ?: emptyList()).map { it to "series" } +
+                                       (trandingParsed.data ?: emptyList()).map { it to "tranding" }
 
                         // 4. Curated Genre Lists (Using the genres field from the API)
                         val genres = listOf("Action", "Comedy", "Horror", "Romance", "Sci-Fi", "Thriller", "Drama", "Crime")
@@ -193,6 +191,17 @@ class HDGharTVSmartProvider : MainAPI() {
                     if (items.isNotEmpty()) {
                         val totalCount = parsed.total ?: items.size
                         lists.add(HomePageList("All Series ($totalCount)", items.shuffled(), isHorizontalImages = false))
+                    }
+                    val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
+                    hasNext = page < totalPages
+                }
+                "tranding" -> {
+                    val res = app.get("$base/api/tranding/public?page=$page&limit=$limit", referer = "$base/")
+                    val parsed = parseJson<MediaListResponse>(res.text)
+                    val items = parsed.data?.mapNotNull { it.toSearchResponse("tranding") } ?: emptyList()
+                    if (items.isNotEmpty()) {
+                        val totalCount = parsed.total ?: items.size
+                        lists.add(HomePageList("tranding ($totalCount)", items.shuffled(), isHorizontalImages = false))
                     }
                     val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
                     hasNext = page < totalPages
