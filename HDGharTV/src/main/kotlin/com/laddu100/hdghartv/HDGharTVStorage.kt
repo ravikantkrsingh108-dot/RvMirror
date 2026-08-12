@@ -12,10 +12,9 @@ object HDGharTVStorage {
         this.prefs = context.getSharedPreferences("HDGharTVPrefs", Context.MODE_PRIVATE)
     }
 
-    // Stores complete media info locally
     data class MediaRecord(
         val id: String,
-        val type: String, // "movie" or "series"
+        val type: String,
         val title: String,
         val overview: String = "",
         val posterPath: String = "",
@@ -23,7 +22,7 @@ object HDGharTVStorage {
         val releaseDate: String = "",
         val firstAirDate: String = "",
         val genres: List<String> = emptyList(),
-        val category: String = "", // "Chinese", "Hollywood", etc.
+        val category: String = "",
         val languages: List<String> = emptyList(),
         val voteAverage: Double = 0.0,
         val runtime: Int = 0,
@@ -31,7 +30,7 @@ object HDGharTVStorage {
         val certification: String = "",
         val productionCompanies: List<String> = emptyList(),
         val cast: List<CastMember> = emptyList(),
-        val ts: Long = System.currentTimeMillis() // For sorting Recently Added
+        val ts: Long = System.currentTimeMillis()
     )
 
     data class CastMember(
@@ -88,7 +87,6 @@ object HDGharTVStorage {
         return cache.values.toList()
     }
 
-    // Crawler state persistence (remembers which page it left off at)
     fun getCrawlerState(): Pair<Int, Int> {
         val mPage = if (::prefs.isInitialized) prefs.getInt("crawler_movie_page", 1) else 1
         val sPage = if (::prefs.isInitialized) prefs.getInt("crawler_series_page", 1) else 1
@@ -99,21 +97,21 @@ object HDGharTVStorage {
         if (!::prefs.isInitialized) return
         prefs.edit().putInt("crawler_movie_page", moviePage).putInt("crawler_series_page", seriesPage).apply()
     }
+}
 
-    // Smart categorization helper
-    fun MediaRecord.getRegion(): String {
-        if (category.isNotBlank()) return category
-        val langs = languages.joinToString(",").lowercase()
-        return when {
-            langs.contains("hindi") -> "Bollywood"
-            langs.contains("korean") -> "Korean"
-            langs.contains("japanese") || genres.any { it.equals("Anime", true) } -> "Anime"
-            langs.contains("chinese") || langs.contains("mandarin") -> "Chinese"
-            else -> "Hollywood"
-        }
+// Moved outside the object so they are top-level extension functions
+fun HDGharTVStorage.MediaRecord.getRegion(): String {
+    if (category.isNotBlank()) return category
+    val langs = languages.joinToString(",").lowercase()
+    return when {
+        langs.contains("hindi") -> "Bollywood"
+        langs.contains("korean") -> "Korean"
+        langs.contains("japanese") || genres.any { it.equals("Anime", true) } -> "Anime"
+        langs.contains("chinese") || langs.contains("mandarin") -> "Chinese"
+        else -> "Hollywood"
     }
+}
 
-    fun MediaRecord.getYear(): String {
-        return (releaseDate.ifEmpty { firstAirDate }).substringBefore("-")
-    }
+fun HDGharTVStorage.MediaRecord.getYear(): String {
+    return (releaseDate.ifEmpty { firstAirDate }).substringBefore("-")
 }
