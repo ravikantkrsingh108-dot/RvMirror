@@ -34,6 +34,7 @@ class HDGharTVSmartProvider : MainAPI() {
     private val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile private var crawling = false
 
+    // API Data Classes
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class StreamLink(
         @JsonProperty("quality") val quality: String? = null,
@@ -70,6 +71,14 @@ class HDGharTVSmartProvider : MainAPI() {
     data class ProductionCountry(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class SpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class ProductionCompany(@JsonProperty("name") val name: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class CastMember(
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("character") val character: String? = null,
+        @JsonProperty("profilePath") val profilePath: String? = null
+    )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class MediaItem(
@@ -82,6 +91,8 @@ class HDGharTVSmartProvider : MainAPI() {
         @JsonProperty("releaseDate") val releaseDate: String? = null,
         @JsonProperty("firstAirDate") val firstAirDate: String? = null,
         @JsonProperty("genres") val genres: List<Genre>? = null,
+        @JsonProperty("category") val category: String? = null,
+        @JsonProperty("languages") val languages: List<String>? = null,
         @JsonProperty("voteAverage") val voteAverage: Double? = null,
         @JsonProperty("runtime") val runtime: Int? = null,
         @JsonProperty("status") val status: String? = null,
@@ -89,6 +100,8 @@ class HDGharTVSmartProvider : MainAPI() {
         @JsonProperty("contentRating") val contentRating: String? = null,
         @JsonProperty("productionCountries") val productionCountries: List<ProductionCountry>? = null,
         @JsonProperty("spokenLanguages") val spokenLanguages: List<SpokenLanguage>? = null,
+        @JsonProperty("productionCompanies") val productionCompanies: List<ProductionCompany>? = null,
+        @JsonProperty("cast") val cast: List<CastMember>? = null,
         @JsonProperty("streamingLinks") val streamingLinks: List<StreamLink>? = null,
         @JsonProperty("seasons") val seasons: List<Season>? = null
     )
@@ -102,19 +115,6 @@ class HDGharTVSmartProvider : MainAPI() {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class LoadData(val id: String, val type: String, val title: String, val posterUrl: String? = null)
-
-    // Helper to determine region for local storage
-    private fun MediaItem.getRegion(): String {
-        val countries = productionCountries?.joinToString(",") { it.name ?: "" }?.lowercase() ?: ""
-        val langs = spokenLanguages?.joinToString(",") { it.englishName ?: it.name ?: "" }?.lowercase() ?: ""
-        return when {
-            countries.contains("united states") || langs.contains("english") -> "Hollywood"
-            countries.contains("india") || langs.contains("hindi") || langs.contains("tamil") || langs.contains("telugu") -> "Bollywood"
-            countries.contains("korea") -> "Korean"
-            countries.contains("japan") || langs.contains("japanese") || genres?.any { it.name?.equals("Anime", true) == true } == true -> "Anime"
-            else -> ""
-        }
-    }
 
     // --- BACKGROUND CRAWLER ---
     private fun kickCrawler() {
@@ -135,10 +135,17 @@ class HDGharTVSmartProvider : MainAPI() {
                         val title = item.title ?: item.originalTitle ?: return@mapNotNull null
                         HDGharTVStorage.MediaRecord(
                             id = id, type = "movie", title = title,
+                            overview = item.overview ?: "", posterPath = item.posterPath ?: "",
+                            backdropPath = item.backdropPath ?: "", releaseDate = item.releaseDate ?: "",
                             genres = item.genres?.mapNotNull { it.name } ?: emptyList(),
-                            year = (item.releaseDate ?: "").substringBefore("-"),
-                            rating = item.voteAverage ?: 0.0,
-                            region = item.getRegion()
+                            category = item.category ?: "", languages = item.languages ?: emptyList(),
+                            voteAverage = item.voteAverage ?: 0.0, runtime = item.runtime ?: 0,
+                            status = item.status ?: "", certification = item.certification ?: item.contentRating ?: "",
+                            productionCompanies = item.productionCompanies?.mapNotNull { it.name } ?: emptyList(),
+                            cast = item.cast?.mapNotNull { c ->
+                                val name = c.name ?: return@mapNotNull null
+                                HDGharTVStorage.CastMember(name, c.character ?: "", c.profilePath)
+                            } ?: emptyList()
                         )
                     } ?: emptyList()
                     if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
@@ -153,10 +160,17 @@ class HDGharTVSmartProvider : MainAPI() {
                         val title = item.title ?: item.originalTitle ?: return@mapNotNull null
                         HDGharTVStorage.MediaRecord(
                             id = id, type = "series", title = title,
+                            overview = item.overview ?: "", posterPath = item.posterPath ?: "",
+                            backdropPath = item.backdropPath ?: "", firstAirDate = item.firstAirDate ?: "",
                             genres = item.genres?.mapNotNull { it.name } ?: emptyList(),
-                            year = (item.firstAirDate ?: "").substringBefore("-"),
-                            rating = item.voteAverage ?: 0.0,
-                            region = item.getRegion()
+                            category = item.category ?: "", languages = item.languages ?: emptyList(),
+                            voteAverage = item.voteAverage ?: 0.0, runtime = item.runtime ?: 0,
+                            status = item.status ?: "", certification = item.certification ?: item.contentRating ?: "",
+                            productionCompanies = item.productionCompanies?.mapNotNull { it.name } ?: emptyList(),
+                            cast = item.cast?.mapNotNull { c ->
+                                val name = c.name ?: return@mapNotNull null
+                                HDGharTVStorage.CastMember(name, c.character ?: "", c.profilePath)
+                            } ?: emptyList()
                         )
                     } ?: emptyList()
                     if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
@@ -187,19 +201,21 @@ class HDGharTVSmartProvider : MainAPI() {
         if (recent.isNotEmpty()) rows.add(HomePageList("🆕 Recently Added (${recent.size})", recent, isHorizontalImages = false))
 
         // 2. Top Trending Movies
-        val trendingMovies = allRecords.filter { it.type == "movie" && it.rating >= 7.0 }.take(60).map { it.toSearchResponse() }
-        if (trendingMovies.isNotEmpty()) rows.add(HomePageList("🔥 Top Trending Movies (${trendingMovies.size})", trendingMovies.shuffled(), isHorizontalImages = false))
+        val trendingMovies = allRecords.filter { it.type == "movie" && it.voteAverage >= 7.0 }
+            .sortedByDescending { it.voteAverage }.take(60).map { it.toSearchResponse() }
+        if (trendingMovies.isNotEmpty()) rows.add(HomePageList("🔥 Top Trending Movies (${trendingMovies.size})", trendingMovies, isHorizontalImages = false))
 
         // 3. Top Trending Series
-        val trendingSeries = allRecords.filter { it.type == "series" && it.rating >= 7.0 }.take(60).map { it.toSearchResponse() }
-        if (trendingSeries.isNotEmpty()) rows.add(HomePageList("🔥 Top Trending Series (${trendingSeries.size})", trendingSeries.shuffled(), isHorizontalImages = false))
+        val trendingSeries = allRecords.filter { it.type == "series" && it.voteAverage >= 7.0 }
+            .sortedByDescending { it.voteAverage }.take(60).map { it.toSearchResponse() }
+        if (trendingSeries.isNotEmpty()) rows.add(HomePageList("🔥 Top Trending Series (${trendingSeries.size})", trendingSeries, isHorizontalImages = false))
 
         // 4. Region Grouping
-        val regions = listOf("Hollywood", "Bollywood", "Korean", "Anime")
+        val regions = listOf("Hollywood", "Bollywood", "Chinese", "Korean", "Anime")
         for (region in regions) {
-            val items = allRecords.filter { it.region == region }.take(60).map { it.toSearchResponse() }
+            val items = allRecords.filter { it.getRegion() == region }.take(60).map { it.toSearchResponse() }
             if (items.size >= 3) {
-                val flag = when(region) { "Hollywood" -> "🎬"; "Bollywood" -> "🇮🇳"; "Korean" -> "🇰🇷"; "Anime" -> "🌸"; else -> "🌐" }
+                val flag = when(region) { "Hollywood" -> "🎬"; "Bollywood" -> "🇮🇳"; "Chinese" -> "🇨🇳"; "Korean" -> "🇰🇷"; "Anime" -> "🌸"; else -> "🌐" }
                 rows.add(HomePageList("$flag $region (${items.size})", items.shuffled(), isHorizontalImages = false))
             }
         }
@@ -217,9 +233,9 @@ class HDGharTVSmartProvider : MainAPI() {
         }
 
         // 6. Year Grouping
-        val years = allRecords.map { it.year }.filter { it.isNotBlank() }.distinct().sortedDescending()
+        val years = allRecords.map { it.getYear() }.filter { it.isNotBlank() }.distinct().sortedDescending()
         years.take(5).forEach { year ->
-            val items = allRecords.filter { it.year == year }.take(60).map { it.toSearchResponse() }
+            val items = allRecords.filter { it.getYear() == year }.take(60).map { it.toSearchResponse() }
             if (items.size >= 3) rows.add(HomePageList("📅 Year $year (${items.size})", items.shuffled(), isHorizontalImages = false))
         }
 
@@ -227,9 +243,9 @@ class HDGharTVSmartProvider : MainAPI() {
     }
 
     private fun HDGharTVStorage.MediaRecord.toSearchResponse(): SearchResponse {
-        val loadData = LoadData(id = this.id, type = this.type, title = this.title)
+        val loadData = LoadData(id = this.id, type = this.type, title = this.title, posterUrl = this.posterPath)
         return newMovieSearchResponse(this.title, loadData.toJson(), if (this.type == "series") TvType.TvSeries else TvType.Movie) {
-            this.posterUrl = "https://image.tmdb.org/t/p/w500/${this@toSearchResponse.id}.jpg" // Fallback poster logic if needed, or leave blank
+            this.posterUrl = this@toSearchResponse.posterPath
         }
     }
 
@@ -240,6 +256,7 @@ class HDGharTVSmartProvider : MainAPI() {
         return allRecords.filter { it.title.contains(query, ignoreCase = true) }.map { it.toSearchResponse() }
     }
 
+    // --- DETAILS PAGE ---
     override suspend fun load(url: String): LoadResponse? {
         val loadData = try { parseJson<LoadData>(url) } catch (e: Exception) { return null }
         val base = apiBase()
@@ -247,14 +264,21 @@ class HDGharTVSmartProvider : MainAPI() {
         return try {
             val endpoint = if (loadData.type == "movie") "movies" else "series"
             val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
-            val item = parseJson<MediaItem>(res.text)
+            val item = parseJson<MediaItem>(res.text) ?: return null
             val title = item.title ?: item.originalTitle ?: loadData.title
             val streams = item.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
 
+            // Build UI Tags (Genres + Languages + Production Companies)
             val tags = mutableListOf<String>()
             item.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
-            item.spokenLanguages?.mapNotNull { it.englishName }?.let { tags.addAll(it) }
-            item.productionCountries?.mapNotNull { it.name }?.let { tags.addAll(it) }
+            item.languages?.let { tags.addAll(it) }
+            item.productionCompanies?.mapNotNull { it.name }?.let { tags.addAll(it) }
+
+            // Build Cast List
+            val actors = item.cast?.mapNotNull { c ->
+                val name = c.name ?: return@mapNotNull null
+                ActorData(Actor(name), roleString = c.character)
+            } ?: emptyList()
 
             if (loadData.type == "movie") {
                 newMovieLoadResponse(title, url, TvType.Movie, streams.toJson()) {
@@ -266,6 +290,7 @@ class HDGharTVSmartProvider : MainAPI() {
                     this.duration = item.runtime
                     this.score = item.voteAverage?.let { Score.from10(it.toString()) }
                     this.contentRating = item.certification ?: item.contentRating
+                    this.actors = actors
                 }
             } else {
                 val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
@@ -292,11 +317,16 @@ class HDGharTVSmartProvider : MainAPI() {
                     this.tags = tags
                     this.score = item.voteAverage?.let { Score.from10(it.toString()) }
                     this.contentRating = item.certification ?: item.contentRating
+                    this.actors = actors
                 }
             }
-        } catch (e: Exception) { null }
+        } catch (e: Exception) {
+            Log.e(TAG, "load: ${e.message}")
+            null
+        }
     }
 
+    // --- VIDEO LINKS ---
     override suspend fun loadLinks(
         data: String, isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
