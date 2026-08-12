@@ -123,18 +123,12 @@ class HDGharTVProvider : MainAPI() {
         "featured" to "Featured"
     )
 
-    private fun MediaItem.isFromCountry(country: String): Boolean {
-        return productionCountries?.any { it.name?.contains(country, true) == true } == true ||
-               spokenLanguages?.any { it.englishName?.contains(country, true) == true || it.name?.contains(country, true) == true } == true
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val lists = mutableListOf<HomePageList>()
         val base = apiBase()
         var hasNext = false
-        val limit = 50
+        val limit = 20
 
-        // 1. Main Pagination (Separated so it never fails if curated lists crash)
         try {
             when (request.data) {
                 "movies" -> {
@@ -159,56 +153,26 @@ class HDGharTVProvider : MainAPI() {
                     val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
                     hasNext = page < totalPages
                 }
+                "featured" -> {
+                    if (page == 1) {
+                        val res = app.get("$base/api/featured/public", referer = "$base/")
+                        val parsed = parseJson<List<FeaturedItem>>(res.text)
+                        val items = parsed.mapNotNull { f ->
+                            val id = f.sourceId ?: return@mapNotNull null
+                            val title = f.title ?: return@mapNotNull null
+                            val type = if (f.type == "series") "series" else "movie"
+                            val loadData = LoadData(id = id, type = type, title = title, posterUrl = f.posterPath)
+                            newMovieSearchResponse(title, loadData.toJson(), if (type == "series") TvType.TvSeries else TvType.Movie) {
+                                this.posterUrl = f.posterPath
+                            }
+                        }.shuffled()
+                        if (items.isNotEmpty()) lists.add(HomePageList("Featured (${items.size})", items, isHorizontalImages = false))
+                    }
+                    hasNext = false
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "getMainPage Pagination: ${e.message}")
-        }
-
-        // 2. Curated Lists (Only on page 1)
-        if (page == 1) {
-            try {
-                // Reduced to 100 to prevent server timeouts
-                val moviesRes = app.get("$base/api/movies/public?page=1&limit=100", referer = "$base/").text
-                val moviesParsed = parseJson<MediaListResponse>(moviesRes)
-                val seriesRes = app.get("$base/api/series/public?page=1&limit=100", referer = "$base/").text
-                val seriesParsed = parseJson<MediaListResponse>(seriesRes)
-
-                val allMovies = moviesParsed.data ?: emptyList()
-                val allSeries = seriesParsed.data ?: emptyList()
-                val allMedia = (allMovies.map { it to "movie" } + allSeries.map { it to "series" })
-
-                val trending = allMedia.filter { (it.first.voteAverage ?: 0.0) >= 7.0 }
-                    .mapNotNull { it.first.toSearchResponse(it.second) }
-                if (trending.isNotEmpty()) lists.add(0, HomePageList("🔥 Trending Now (${trending.size})", trending.shuffled(), isHorizontalImages = false))
-
-                val hollywood = allMedia.filter { it.first.isFromCountry("United States") || it.first.isFromCountry("English") }
-                    .mapNotNull { it.first.toSearchResponse(it.second) }
-                if (hollywood.isNotEmpty()) lists.add(0, HomePageList("🎬 Hollywood (${hollywood.size})", hollywood.shuffled(), isHorizontalImages = false))
-
-                val bollywood = allMedia.filter { it.first.isFromCountry("India") || it.first.isFromCountry("Hindi") }
-                    .mapNotNull { it.first.toSearchResponse(it.second) }
-                if (bollywood.isNotEmpty()) lists.add(0, HomePageList("🇮🇳 Bollywood (${bollywood.size})", bollywood.shuffled(), isHorizontalImages = false))
-
-                val korean = allMedia.filter { it.first.isFromCountry("Korea") }
-                    .mapNotNull { it.first.toSearchResponse(it.second) }
-                if (korean.isNotEmpty()) lists.add(0, HomePageList("🇰🇷 Korean (${korean.size})", korean.shuffled(), isHorizontalImages = false))
-
-                val featuredRes = app.get("$base/api/featured/public?page=1&limit=1000", referer = "$base/")
-                val featuredParsed = parseJson<List<FeaturedItem>>(featuredRes.text)
-                val featuredItems = featuredParsed.mapNotNull { f ->
-                    val id = f.sourceId ?: return@mapNotNull null
-                    val title = f.title ?: return@mapNotNull null
-                    val type = if (f.type == "series") "series" else "movie"
-                    val loadData = LoadData(id = id, type = type, title = title, posterUrl = f.posterPath)
-                    newMovieSearchResponse(title, loadData.toJson(), if (type == "series") TvType.TvSeries else TvType.Movie) {
-                        this.posterUrl = f.posterPath
-                    }
-                }.shuffled()
-                if (featuredItems.isNotEmpty()) lists.add(0, HomePageList("⭐ Featured (${featuredItems.size})", featuredItems, isHorizontalImages = false))
-
-            } catch (e: Exception) {
-                Log.e(TAG, "getMainPage Curated: ${e.message}")
-            }
+            Log.e(TAG, "getMainPage: ${e.message}")
         }
 
         return newHomePageResponse(lists, hasNext = hasNext)
@@ -232,100 +196,77 @@ class HDGharTVProvider : MainAPI() {
             for (page in 1..5) {
                 val res = app.get("$base/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&page=$page", referer = "$base/")
                 val parsed = parseJson<ApiSearchResponse>(res.text)
-                
                 val movies = parsed.movies
                 val series = parsed.series
-                
                 if (movies.isNullOrEmpty() && series.isNullOrEmpty()) break
-                
                 movies?.forEach { m -> m.toSearchResponse("movie")?.let { results.add(it) } }
                 series?.forEach { s -> s.toSearchResponse("series")?.let { results.add(it) } }
-                
                 if ((movies?.size ?: 0) < 20 && (series?.size ?: 0) < 20) break
             }
         } catch (e: Exception) {
             Log.e(TAG, "search: ${e.message}")
         }
-
         return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val loadData = try {
-            parseJson<LoadData>(url)
-        } catch (e: Exception) {
-            Log.e(TAG, "load: ${e.message}")
-            return null
-        }
-
+        val loadData = try { parseJson<LoadData>(url) } catch (e: Exception) { return null }
         val base = apiBase()
+        val endpoint = if (loadData.type == "movie") "movies" else "series"
 
         return try {
-            when (loadData.type) {
-                "movie" -> {
-                    val res = app.get("$base/api/movies/public/${loadData.id}", referer = "$base/")
-                    val movie = parseJson<MediaItem>(res.text)
-                    val title = movie.title ?: movie.originalTitle ?: loadData.title
-                    val streams = movie.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
+            // Fetch raw text to inspect exactly what HDGharTV is returning
+            val text = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/").text
+            val item = parseJson<MediaItem>(text) ?: return null
+            val title = item.title ?: item.originalTitle ?: loadData.title
+            val streams = item.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
 
-                    val tags = mutableListOf<String>()
-                    movie.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
-                    movie.spokenLanguages?.mapNotNull { it.englishName }?.let { tags.addAll(it) }
-                    movie.productionCountries?.mapNotNull { it.name }?.let { tags.addAll(it) }
+            val tags = mutableListOf<String>()
+            item.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
+            item.spokenLanguages?.mapNotNull { it.englishName }?.let { tags.addAll(it) }
+            item.productionCountries?.mapNotNull { it.name }?.let { tags.addAll(it) }
 
-                    newMovieLoadResponse(title, url, TvType.Movie, streams.toJson()) {
-                        this.posterUrl = movie.posterPath ?: loadData.posterUrl
-                        this.backgroundPosterUrl = movie.backdropPath
-                        this.plot = movie.overview
-                        this.year = movie.releaseDate?.substring(0, 4)?.toIntOrNull()
-                        this.tags = tags
-                        this.duration = movie.runtime
-                        this.score = movie.voteAverage?.let { Score.from10(it.toString()) }
-                        this.contentRating = movie.certification ?: movie.contentRating
+            // --- EXPERIMENTAL PLOT ---
+            // We append the raw JSON string to the plot so you can see exactly what HDGharTV is providing.
+            val experimentalPlot = "${item.overview?.trim() ?: ""}\n\n--- EXPERIMENTAL RAW DATA ---\n$text"
+
+            if (loadData.type == "movie") {
+                newMovieLoadResponse(title, url, TvType.Movie, streams.toJson()) {
+                    this.posterUrl = item.posterPath ?: loadData.posterUrl
+                    this.backgroundPosterUrl = item.backdropPath
+                    this.plot = experimentalPlot // Injected raw JSON here
+                    this.year = item.releaseDate?.substring(0, 4)?.toIntOrNull()
+                    this.tags = tags
+                    this.duration = item.runtime
+                    this.score = item.voteAverage?.let { Score.from10(it.toString()) }
+                    this.contentRating = item.certification ?: item.contentRating
+                }
+            } else {
+                val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
+                item.seasons?.forEach { season ->
+                    val seasonNum = season.seasonNumber ?: return@forEach
+                    season.episodes?.forEach { ep ->
+                        val epNum = ep.episodeNumber ?: return@forEach
+                        val epStreams = ep.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
+                        episodes.add(newEpisode(epStreams.toJson()) {
+                            this.name = ep.name ?: "Episode $epNum"
+                            this.season = seasonNum
+                            this.episode = epNum
+                            this.posterUrl = ep.stillPath
+                            this.description = ep.overview
+                            this.runTime = ep.runtime
+                        })
                     }
                 }
-                "series" -> {
-                    val res = app.get("$base/api/series/public/${loadData.id}", referer = "$base/")
-                    val series = parseJson<MediaItem>(res.text)
-                    val title = series.title ?: series.originalTitle ?: loadData.title
-
-                    val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
-                    series.seasons?.forEach { season ->
-                        val seasonNum = season.seasonNumber ?: return@forEach
-                        season.episodes?.forEach { ep ->
-                            val epNum = ep.episodeNumber ?: return@forEach
-                            val streams = ep.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
-                            val epData = streams.toJson()
-
-                            episodes.add(
-                                newEpisode(epData) {
-                                    this.name = ep.name ?: "Episode $epNum"
-                                    this.season = seasonNum
-                                    this.episode = epNum
-                                    this.posterUrl = ep.stillPath
-                                    this.description = ep.overview
-                                    this.runTime = ep.runtime
-                                }
-                            )
-                        }
-                    }
-
-                    val tags = mutableListOf<String>()
-                    series.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
-                    series.spokenLanguages?.mapNotNull { it.englishName }?.let { tags.addAll(it) }
-                    series.productionCountries?.mapNotNull { it.name }?.let { tags.addAll(it) }
-
-                    newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                        this.posterUrl = series.posterPath ?: loadData.posterUrl
-                        this.backgroundPosterUrl = series.backdropPath
-                        this.plot = series.overview
-                        this.year = series.firstAirDate?.substring(0, 4)?.toIntOrNull()
-                        this.tags = tags
-                        this.score = series.voteAverage?.let { Score.from10(it.toString()) }
-                        this.contentRating = series.certification ?: series.contentRating
-                    }
+                newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                    this.posterUrl = item.posterPath ?: loadData.posterUrl
+                    this.backgroundPosterUrl = item.backdropPath
+                    this.plot = experimentalPlot // Injected raw JSON here
+                    this.year = item.firstAirDate?.substring(0, 4)?.toIntOrNull()
+                    this.tags = tags
+                    this.score = item.voteAverage?.let { Score.from10(it.toString()) }
+                    this.contentRating = item.certification ?: item.contentRating
                 }
-                else -> null
             }
         } catch (e: Exception) {
             Log.e(TAG, "load: ${e.message}")
@@ -334,20 +275,11 @@ class HDGharTVProvider : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        data: String, isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val streams = try {
-            parseJson<List<StreamLink>>(data)
-        } catch (e: Exception) {
-            Log.e(TAG, "loadLinks: ${e.message}")
-            return false
-        }
-
+        val streams = try { parseJson<List<StreamLink>>(data) } catch (e: Exception) { return false }
         if (streams.isEmpty()) return false
-
         val base = apiBase()
         var found = false
 
@@ -375,29 +307,15 @@ class HDGharTVProvider : MainAPI() {
                 "Referer" to "$base/"
             )
             if (stream.headers?.isNotBlank() == true) {
-                try {
-                    val extraHeaders = parseJson<Map<String, String>>(stream.headers)
-                    headers.putAll(extraHeaders)
-                } catch (_: Exception) {}
+                try { headers.putAll(parseJson<Map<String, String>>(stream.headers)) } catch (_: Exception) {}
             }
-            if (stream.userAgent?.isNotBlank() == true) {
-                headers["User-Agent"] = stream.userAgent
-            }
+            if (stream.userAgent?.isNotBlank() == true) headers["User-Agent"] = stream.userAgent
 
-            callback.invoke(
-                newExtractorLink(
-                    source = this.name,
-                    name = stream.quality ?: "Unknown",
-                    url = url,
-                    type = type
-                ) {
-                    this.quality = quality
-                    this.headers = headers
-                }
-            )
+            callback.invoke(newExtractorLink(this.name, stream.quality ?: "Unknown", url, type) {
+                this.quality = quality; this.headers = headers
+            })
             found = true
         }
-
         return found
     }
 }
