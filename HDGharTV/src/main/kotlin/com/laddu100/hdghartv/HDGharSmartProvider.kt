@@ -2,6 +2,7 @@ package com.laddu100.hdghartv
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.utils.AppUtils.toJson
 
 class HDGharSmartProvider : BaseHDGharProvider() {
     override var name = "HDGhar Smart"
@@ -35,18 +36,15 @@ class HDGharSmartProvider : BaseHDGharProvider() {
                 "smart" -> {
                     val allRecords = HDGharTVStorage.getAll()
                     if (allRecords.isNotEmpty()) {
-                        // 1 & 2. Most Popular Movies & Series (Vote Average)
                         val popMovies = allRecords.filter { it.type == "movie" }.sortedByDescending { it.voteAverage }.map { it.toSearchResponse() }
                         if (popMovies.isNotEmpty()) lists.add(HomePageList("🏆 Most Popular Movies (${popMovies.size})", popMovies, isHorizontalImages = false))
                         
                         val popSeries = allRecords.filter { it.type == "series" }.sortedByDescending { it.voteAverage }.map { it.toSearchResponse() }
                         if (popSeries.isNotEmpty()) lists.add(HomePageList("🏆 Most Popular Series (${popSeries.size})", popSeries, isHorizontalImages = false))
 
-                        // 3. Most Viewed (ViewCount)
                         val viewed = allRecords.filter { it.viewCount > 0 }.sortedByDescending { it.viewCount }.map { it.toSearchResponse() }
                         if (viewed.isNotEmpty()) lists.add(HomePageList("👁️ Most Viewed (${viewed.size})", viewed, isHorizontalImages = false))
 
-                        // 4. Categories Grouping
                         val catBuckets = LinkedHashMap<String, MutableList<HDGharTVStorage.MediaRecord>>()
                         allRecords.forEach { rec -> rec.categories.forEach { catBuckets.getOrPut(it) { mutableListOf() }.add(rec) } }
                         catBuckets.entries.sortedByDescending { it.value.size }.forEach { (cat, items) ->
@@ -54,7 +52,6 @@ class HDGharSmartProvider : BaseHDGharProvider() {
                             if (mapped.size >= 2) lists.add(HomePageList("🏷️ $cat (${mapped.size})", mapped, isHorizontalImages = false))
                         }
 
-                        // 5. Genres Grouping
                         val genreBuckets = LinkedHashMap<String, MutableList<HDGharTVStorage.MediaRecord>>()
                         allRecords.forEach { rec -> rec.genres.forEach { genreBuckets.getOrPut(it) { mutableListOf() }.add(rec) } }
                         genreBuckets.entries.sortedByDescending { it.value.size }.forEach { (genre, items) ->
@@ -76,7 +73,6 @@ class HDGharSmartProvider : BaseHDGharProvider() {
         return newMovieSearchResponse(title, loadData.toJson(), if (type == "series") TvType.TvSeries else TvType.Movie) { this.posterUrl = posterPath }
     }
 
-    // Standard title search
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
         return HDGharTVStorage.getAll().filter { it.title.contains(query, ignoreCase = true) }.map { it.toSearchResponse() }
