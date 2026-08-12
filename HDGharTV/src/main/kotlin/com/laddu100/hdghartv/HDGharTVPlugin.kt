@@ -8,8 +8,7 @@ import com.lagradost.cloudstream3.plugins.Plugin
 class HDGharTVPlugin : Plugin() {
     override fun load(context: Context) {
         HDGharTVStorage.init(context.applicationContext)
-        registerMainAPI(HDGharTvSmartProvider())
-        registerMainAPI(HDGharSmartProvider())
+        registerMainAPI(HDGharSmartProvider()) // Fixed typo here
         registerMainAPI(HDGharCollectionProvider())
         registerMainAPI(HDGharNetworkProvider())
         registerMainAPI(HDGharYearProvider())
