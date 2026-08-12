@@ -1,4 +1,3 @@
-// HDGharTV/src/main/kotlin/com/laddu100/hdghartv/HDGharTVStorage.kt
 package com.laddu100.hdghartv
 
 import android.content.Context
@@ -13,18 +12,18 @@ object HDGharTVStorage {
         this.prefs = context.getSharedPreferences("HDGharTVPrefs", Context.MODE_PRIVATE)
     }
 
-    // 存储完整的媒体信息
+    // Stores complete media info locally
     data class MediaRecord(
         val id: String,
-        val type: String, // "movie" 或 "series"
+        val type: String, // "movie" or "series"
         val title: String,
         val overview: String = "",
         val posterPath: String = "",
         val backdropPath: String = "",
-        val releaseDate: String = "", // "2025-01-29"
+        val releaseDate: String = "",
         val firstAirDate: String = "",
         val genres: List<String> = emptyList(),
-        val category: String = "", // "Chinese", "Hollywood", "Bollywood", "Korean", "Anime"
+        val category: String = "", // "Chinese", "Hollywood", etc.
         val languages: List<String> = emptyList(),
         val voteAverage: Double = 0.0,
         val runtime: Int = 0,
@@ -32,7 +31,7 @@ object HDGharTVStorage {
         val certification: String = "",
         val productionCompanies: List<String> = emptyList(),
         val cast: List<CastMember> = emptyList(),
-        val ts: Long = System.currentTimeMillis() // 用于排序最近添加
+        val ts: Long = System.currentTimeMillis() // For sorting Recently Added
     )
 
     data class CastMember(
@@ -89,13 +88,7 @@ object HDGharTVStorage {
         return cache.values.toList()
     }
 
-    @Synchronized
-    fun getById(id: String): MediaRecord? {
-        load()
-        return cache[id]
-    }
-
-    // 爬虫状态持久化（记住爬到了哪一页）
+    // Crawler state persistence (remembers which page it left off at)
     fun getCrawlerState(): Pair<Int, Int> {
         val mPage = if (::prefs.isInitialized) prefs.getInt("crawler_movie_page", 1) else 1
         val sPage = if (::prefs.isInitialized) prefs.getInt("crawler_series_page", 1) else 1
@@ -107,26 +100,9 @@ object HDGharTVStorage {
         prefs.edit().putInt("crawler_movie_page", moviePage).putInt("crawler_series_page", seriesPage).apply()
     }
 
-    fun resetCrawler() {
-        if (!::prefs.isInitialized) return
-        prefs.edit().remove("crawler_movie_page").remove("crawler_series_page").apply()
-    }
-
-    // 智能分类函数
+    // Smart categorization helper
     fun MediaRecord.getRegion(): String {
-        // 优先使用 category 字段
-        if (category.isNotBlank()) {
-            return when (category.lowercase()) {
-                "chinese" -> "Chinese"
-                "hollywood" -> "Hollywood"
-                "bollywood" -> "Bollywood"
-                "korean" -> "Korean"
-                "anime" -> "Anime"
-                else -> category
-            }
-        }
-        
-        // 根据 languages 判断
+        if (category.isNotBlank()) return category
         val langs = languages.joinToString(",").lowercase()
         return when {
             langs.contains("hindi") -> "Bollywood"
