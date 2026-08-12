@@ -1,10 +1,6 @@
 package com.laddu100.hdghartv
 
-import com.lagradost.cloudstream3.HomePageList
-import com.lagradost.cloudstream3.HomePageResponse
-import com.lagradost.cloudstream3.MainPageRequest
-import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.newHomePageResponse
+import com.lagradost.cloudstream3.*
 
 class HDGharCollectionProvider : BaseHDGharProvider() {
     override var name = "HDGhar Collections"
@@ -23,7 +19,6 @@ class HDGharCollectionProvider : BaseHDGharProvider() {
         return newHomePageResponse(lists, hasNext = false)
     }
 
-    // Search specifically for Collection names
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
         return HDGharTVStorage.getAll().filter { it.collection.contains(query, ignoreCase = true) }.map { it.toSearchResponse() }
