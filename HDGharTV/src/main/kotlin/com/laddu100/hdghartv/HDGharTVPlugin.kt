@@ -7,8 +7,8 @@ import com.lagradost.cloudstream3.plugins.Plugin
 @CloudstreamPlugin
 class HDGharTVPlugin : Plugin() {
     override fun load(context: Context) {
-        HDGharTVStorage.init(context.applicationContext) // Initialize local storage
-        registerMainAPI(HDGharTVProvider())
-        registerMainAPI(HDGharTVSmartProvider()) // Register the new smart catalog
+        HDGharTVStorage.init(context.applicationContext)
+        // Only register the Smart Provider
+        registerMainAPI(HDGharTVSmartProvider()) 
     }
 }
