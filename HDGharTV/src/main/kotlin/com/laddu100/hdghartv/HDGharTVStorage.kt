@@ -48,7 +48,7 @@ object HDGharTVStorage {
     @Synchronized
     private fun persist() {
         if (!::prefs.isInitialized) return
-        prefs.edit().putString("hdghartv_catalog", toJson(Store(cache))).apply()
+        prefs.edit().putString("hdghartv_catalog", Store(cache).toJson()).apply()
     }
 
     @Synchronized
