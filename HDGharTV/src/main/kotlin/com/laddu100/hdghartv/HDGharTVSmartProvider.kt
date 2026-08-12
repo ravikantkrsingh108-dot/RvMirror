@@ -303,14 +303,14 @@ class HDGharTVSmartProvider : MainAPI() {
         val title = title ?: originalTitle ?: return null
         val loadData = LoadData(id = id, type = type, title = title, posterUrl = posterPath)
         return newMovieSearchResponse(title, loadData.toJson(), if (type == "series") TvType.TvSeries else TvType.Movie) {
-            this.posterUrl = posterPath
+            this.posterUrl = posterPath // Fixed scope issue here
         }
     }
 
     private fun HDGharTVStorage.MediaRecord.toSearchResponse(): SearchResponse {
         val loadData = LoadData(id = this.id, type = this.type, title = this.title, posterUrl = this.posterPath)
         return newMovieSearchResponse(this.title, loadData.toJson(), if (this.type == "series") TvType.TvSeries else TvType.Movie) {
-            this.posterUrl = this.posterPath
+            this.posterUrl = loadData.posterUrl // Fixed scope issue here
         }
     }
 
