@@ -10,13 +10,17 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class HDGharTVSmartProvider : MainAPI() {
     override var mainUrl = "https://hdghartv.cc"
     override var name = "HDGharTV Smart"
     override var lang = "hi"
     override val hasMainPage = true
-    override val hasDownloadSupport = true // Download button enabled
+    override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     private val fallbackApiBase = "https://hdghartv.cc"
@@ -27,7 +31,9 @@ class HDGharTVSmartProvider : MainAPI() {
         return (domain ?: fallbackApiBase).removeSuffix("/")
     }
 
-    // --- DATA CLASSES (Stores all content details the platform gives) ---
+    private val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @Volatile private var crawling = false
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class StreamLink(
         @JsonProperty("quality") val quality: String? = null,
@@ -59,6 +65,13 @@ class HDGharTVSmartProvider : MainAPI() {
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
+    data class Genre(@JsonProperty("name") val name: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class ProductionCountry(@JsonProperty("name") val name: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class SpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
     data class MediaItem(
         @JsonProperty("_id") val id: String? = null,
         @JsonProperty("title") val title: String? = null,
@@ -81,13 +94,6 @@ class HDGharTVSmartProvider : MainAPI() {
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class Genre(@JsonProperty("name") val name: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class ProductionCountry(@JsonProperty("name") val name: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class SpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
     data class MediaListResponse(
         @JsonProperty("data") val data: List<MediaItem>? = null,
         @JsonProperty("totalPages") val totalPages: Int? = null,
@@ -95,292 +101,208 @@ class HDGharTVSmartProvider : MainAPI() {
     )
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class ApiSearchResponse(
-        @JsonProperty("movies") val movies: List<MediaItem>? = null,
-        @JsonProperty("series") val series: List<MediaItem>? = null
-    )
+    data class LoadData(val id: String, val type: String, val title: String, val posterUrl: String? = null)
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    data class LoadData(
-        val id: String,
-        val type: String,
-        val title: String,
-        val posterUrl: String? = null
-    )
-
-    override val mainPage = mainPageOf(
-        "smart" to "Smart Catalog",
-        "movies" to "All Movies",
-        "series" to "All Series"
-    )
-
-    private fun MediaItem.isFromCountry(country: String): Boolean {
-        return productionCountries?.any { it.name?.contains(country, true) == true } == true ||
-               spokenLanguages?.any { it.englishName?.contains(country, true) == true || it.name?.contains(country, true) == true } == true
-    }
-
-    private fun MediaItem.getYear(): String? {
-        return (releaseDate ?: firstAirDate)?.substring(0, 4)
-    }
-
-    private fun MediaItem.toSearchResponse(type: String): SearchResponse? {
-        val id = id ?: return null
-        val title = title ?: originalTitle ?: return null
-        val loadData = LoadData(id = id, type = type, title = title, posterUrl = posterPath)
-        return newMovieSearchResponse(title, loadData.toJson(), if (type == "series") TvType.TvSeries else TvType.Movie) {
-            this.posterUrl = posterPath
+    // Helper to determine region for local storage
+    private fun MediaItem.getRegion(): String {
+        val countries = productionCountries?.joinToString(",") { it.name ?: "" }?.lowercase() ?: ""
+        val langs = spokenLanguages?.joinToString(",") { it.englishName ?: it.name ?: "" }?.lowercase() ?: ""
+        return when {
+            countries.contains("united states") || langs.contains("english") -> "Hollywood"
+            countries.contains("india") || langs.contains("hindi") || langs.contains("tamil") || langs.contains("telugu") -> "Bollywood"
+            countries.contains("korea") -> "Korean"
+            countries.contains("japan") || langs.contains("japanese") || genres?.any { it.name?.equals("Anime", true) == true } == true -> "Anime"
+            else -> ""
         }
     }
 
-    // Safely fetch 100 movies and 100 series to build smart rows
-    private suspend fun fetchSmartBatch(): List<Pair<MediaItem, String>> {
-        val base = apiBase()
-        val allMedia = mutableListOf<Pair<MediaItem, String>>()
-        try {
-            for (i in 1..2) {
-                val mRes = app.get("$base/api/movies/public?page=$i&limit=50", referer = "$base/").text
-                val mParsed = parseJson<MediaListResponse>(mRes)
-                mParsed.data?.forEach { allMedia.add(it to "movie") }
-                if (mParsed.data?.size ?: 0 < 50) break
+    // --- BACKGROUND CRAWLER ---
+    private fun kickCrawler() {
+        if (crawling) return
+        crawling = true
+        crawlerScope.launch {
+            try {
+                val base = apiBase()
+                var (moviePage, seriesPage) = HDGharTVStorage.getCrawlerState()
+                val limit = 50
+
+                // Fetch 2 pages of movies and 2 pages of series per background cycle
+                for (i in 1..2) {
+                    val mRes = app.get("$base/api/movies/public?page=$moviePage&limit=$limit", referer = "$base/").text
+                    val mParsed = parseJson<MediaListResponse>(mRes)
+                    val mRecords = mParsed.data?.mapNotNull { item ->
+                        val id = item.id ?: return@mapNotNull null
+                        val title = item.title ?: item.originalTitle ?: return@mapNotNull null
+                        HDGharTVStorage.MediaRecord(
+                            id = id, type = "movie", title = title,
+                            genres = item.genres?.mapNotNull { it.name } ?: emptyList(),
+                            year = (item.releaseDate ?: "").substringBefore("-"),
+                            rating = item.voteAverage ?: 0.0,
+                            region = item.getRegion()
+                        )
+                    } ?: emptyList()
+                    if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
+                    if (mParsed.data?.size ?: 0 < limit) moviePage = 1 else moviePage++
+                }
+
+                for (i in 1..2) {
+                    val sRes = app.get("$base/api/series/public?page=$seriesPage&limit=$limit", referer = "$base/").text
+                    val sParsed = parseJson<MediaListResponse>(sRes)
+                    val sRecords = sParsed.data?.mapNotNull { item ->
+                        val id = item.id ?: return@mapNotNull null
+                        val title = item.title ?: item.originalTitle ?: return@mapNotNull null
+                        HDGharTVStorage.MediaRecord(
+                            id = id, type = "series", title = title,
+                            genres = item.genres?.mapNotNull { it.name } ?: emptyList(),
+                            year = (item.firstAirDate ?: "").substringBefore("-"),
+                            rating = item.voteAverage ?: 0.0,
+                            region = item.getRegion()
+                        )
+                    } ?: emptyList()
+                    if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
+                    if (sParsed.data?.size ?: 0 < limit) seriesPage = 1 else seriesPage++
+                }
+
+                HDGharTVStorage.saveCrawlerState(moviePage, seriesPage)
+            } catch (e: Exception) {
+                Log.e(TAG, "Crawler error: ${e.message}")
+            } finally {
+                crawling = false
             }
-            for (i in 1..2) {
-                val sRes = app.get("$base/api/series/public?page=$i&limit=50", referer = "$base/").text
-                val sParsed = parseJson<MediaListResponse>(sRes)
-                sParsed.data?.forEach { allMedia.add(it to "series") }
-                if (sParsed.data?.size ?: 0 < 50) break
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "fetchSmartBatch: ${e.message}")
         }
-        return allMedia
     }
 
+    // --- HOMEPAGE (Built entirely from Local Storage) ---
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val lists = mutableListOf<HomePageList>()
-        val base = apiBase()
-        var hasNext = false
-        val limit = 20 // Safe limit for pagination
+        kickCrawler() // Start fetching in background
+        val allRecords = HDGharTVStorage.getAll()
+        val rows = mutableListOf<HomePageList>()
 
-        try {
-            when (request.data) {
-                "movies" -> {
-                    val res = app.get("$base/api/movies/public?page=$page&limit=$limit", referer = "$base/")
-                    val parsed = parseJson<MediaListResponse>(res.text)
-                    val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
-                    if (items.isNotEmpty()) {
-                        val totalCount = parsed.total ?: items.size
-                        // Unshuffled as requested
-                        lists.add(HomePageList("All Movies ($totalCount)", items, isHorizontalImages = false))
-                    }
-                    val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
-                    hasNext = page < totalPages
-                }
-                "series" -> {
-                    val res = app.get("$base/api/series/public?page=$page&limit=$limit", referer = "$base/")
-                    val parsed = parseJson<MediaListResponse>(res.text)
-                    val items = parsed.data?.mapNotNull { it.toSearchResponse("series") } ?: emptyList()
-                    if (items.isNotEmpty()) {
-                        val totalCount = parsed.total ?: items.size
-                        // Unshuffled as requested
-                        lists.add(HomePageList("All Series ($totalCount)", items, isHorizontalImages = false))
-                    }
-                    val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
-                    hasNext = page < totalPages
-                }
-                "smart" -> {
-                    if (page == 1) {
-                        val allMedia = fetchSmartBatch()
-
-                        // 1. Recently Added (Sorted by DB ID which contains timestamp)
-                        val recent = allMedia.sortedByDescending { it.first.id ?: "" }.take(30)
-                            .mapNotNull { it.first.toSearchResponse(it.second) }
-                        if (recent.isNotEmpty()) lists.add(HomePageList("🆕 Recently Added (${recent.size})", recent, isHorizontalImages = false))
-
-                        // 2. Top Trending Movies (Rating >= 7.0)
-                        val trendingMovies = allMedia.filter { it.second == "movie" && (it.first.voteAverage ?: 0.0) >= 7.0 }
-                            .mapNotNull { it.first.toSearchResponse("movie") }
-                        if (trendingMovies.isNotEmpty()) lists.add(HomePageList("🔥 Top Trending Movies (${trendingMovies.size})", trendingMovies.shuffled(), isHorizontalImages = false))
-
-                        // 3. Top Trending Series (Rating >= 7.0)
-                        val trendingSeries = allMedia.filter { it.second == "series" && (it.first.voteAverage ?: 0.0) >= 7.0 }
-                            .mapNotNull { it.first.toSearchResponse("series") }
-                        if (trendingSeries.isNotEmpty()) lists.add(HomePageList("🔥 Top Trending Series (${trendingSeries.size})", trendingSeries.shuffled(), isHorizontalImages = false))
-
-                        // 4. Region Grouping (Shuffled)
-                        val hollywood = allMedia.filter { it.first.isFromCountry("United States") || it.first.isFromCountry("English") }
-                            .mapNotNull { it.first.toSearchResponse(it.second) }
-                        if (hollywood.isNotEmpty()) lists.add(HomePageList("🎬 Hollywood (${hollywood.size})", hollywood.shuffled(), isHorizontalImages = false))
-
-                        val bollywood = allMedia.filter { it.first.isFromCountry("India") || it.first.isFromCountry("Hindi") }
-                            .mapNotNull { it.first.toSearchResponse(it.second) }
-                        if (bollywood.isNotEmpty()) lists.add(HomePageList("🇮🇳 Bollywood (${bollywood.size})", bollywood.shuffled(), isHorizontalImages = false))
-
-                        val korean = allMedia.filter { it.first.isFromCountry("Korea") }
-                            .mapNotNull { it.first.toSearchResponse(it.second) }
-                        if (korean.isNotEmpty()) lists.add(HomePageList("🇰🇷 Korean (${korean.size})", korean.shuffled(), isHorizontalImages = false))
-
-                        val anime = allMedia.filter { 
-                            it.first.genres?.any { g -> g.name?.contains("Anime", true) == true || g.name?.contains("Animation", true) == true } == true || it.first.isFromCountry("Japan") 
-                        }.mapNotNull { it.first.toSearchResponse(it.second) }
-                        if (anime.isNotEmpty()) lists.add(HomePageList("🌸 Anime (${anime.size})", anime.shuffled(), isHorizontalImages = false))
-
-                        // 5. Genre-wise Grouping (Shuffled)
-                        val genres = listOf("Action", "Comedy", "Horror", "Romance", "Sci-Fi", "Thriller", "Drama", "Crime")
-                        for (genre in genres) {
-                            val items = allMedia.filter { (m, _) ->
-                                m.genres?.any { it.name?.equals(genre, true) == true } == true
-                            }.mapNotNull { it.first.toSearchResponse(it.second) }
-                            if (items.size >= 3) {
-                                lists.add(HomePageList("🎭 $genre (${items.size})", items.shuffled(), isHorizontalImages = false))
-                            }
-                        }
-
-                        // 6. Year-wise Grouping (Shuffled)
-                        val years = allMedia.mapNotNull { it.first.getYear() }.distinct().sortedDescending()
-                        for (year in years) {
-                            val items = allMedia.filter { it.first.getYear() == year }
-                                .mapNotNull { it.first.toSearchResponse(it.second) }
-                            if (items.size >= 3) {
-                                lists.add(HomePageList("📅 Year $year (${items.size})", items.shuffled(), isHorizontalImages = false))
-                            }
-                        }
-                    }
-                    hasNext = false
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "getMainPage: ${e.message}")
+        if (allRecords.isEmpty()) {
+            return newHomePageResponse(listOf(HomePageList("Loading Catalog...", emptyList(), false)), hasNext = false)
         }
 
-        return newHomePageResponse(lists, hasNext = hasNext)
+        // 1. Recently Added (Sorted by timestamp)
+        val recent = allRecords.sortedByDescending { it.ts }.take(60).map { it.toSearchResponse() }
+        if (recent.isNotEmpty()) rows.add(HomePageList("🆕 Recently Added (${recent.size})", recent, isHorizontalImages = false))
+
+        // 2. Top Trending Movies
+        val trendingMovies = allRecords.filter { it.type == "movie" && it.rating >= 7.0 }.take(60).map { it.toSearchResponse() }
+        if (trendingMovies.isNotEmpty()) rows.add(HomePageList("🔥 Top Trending Movies (${trendingMovies.size})", trendingMovies.shuffled(), isHorizontalImages = false))
+
+        // 3. Top Trending Series
+        val trendingSeries = allRecords.filter { it.type == "series" && it.rating >= 7.0 }.take(60).map { it.toSearchResponse() }
+        if (trendingSeries.isNotEmpty()) rows.add(HomePageList("🔥 Top Trending Series (${trendingSeries.size})", trendingSeries.shuffled(), isHorizontalImages = false))
+
+        // 4. Region Grouping
+        val regions = listOf("Hollywood", "Bollywood", "Korean", "Anime")
+        for (region in regions) {
+            val items = allRecords.filter { it.region == region }.take(60).map { it.toSearchResponse() }
+            if (items.size >= 3) {
+                val flag = when(region) { "Hollywood" -> "🎬"; "Bollywood" -> "🇮🇳"; "Korean" -> "🇰🇷"; "Anime" -> "🌸"; else -> "🌐" }
+                rows.add(HomePageList("$flag $region (${items.size})", items.shuffled(), isHorizontalImages = false))
+            }
+        }
+
+        // 5. Genre Grouping
+        val genreBuckets = LinkedHashMap<String, MutableList<HDGharTVStorage.MediaRecord>>()
+        allRecords.forEach { rec ->
+            rec.genres.forEach { genre ->
+                genreBuckets.getOrPut(genre) { mutableListOf() }.add(rec)
+            }
+        }
+        genreBuckets.entries.sortedByDescending { it.value.size }.take(10).forEach { (genre, items) ->
+            val mapped = items.take(60).map { it.toSearchResponse() }
+            if (mapped.size >= 3) rows.add(HomePageList("🎭 $genre (${mapped.size})", mapped.shuffled(), isHorizontalImages = false))
+        }
+
+        // 6. Year Grouping
+        val years = allRecords.map { it.year }.filter { it.isNotBlank() }.distinct().sortedDescending()
+        years.take(5).forEach { year ->
+            val items = allRecords.filter { it.year == year }.take(60).map { it.toSearchResponse() }
+            if (items.size >= 3) rows.add(HomePageList("📅 Year $year (${items.size})", items.shuffled(), isHorizontalImages = false))
+        }
+
+        return newHomePageResponse(rows, hasNext = false)
     }
 
+    private fun HDGharTVStorage.MediaRecord.toSearchResponse(): SearchResponse {
+        val loadData = LoadData(id = this.id, type = this.type, title = this.title)
+        return newMovieSearchResponse(this.title, loadData.toJson(), if (this.type == "series") TvType.TvSeries else TvType.Movie) {
+            this.posterUrl = "https://image.tmdb.org/t/p/w500/${this@toSearchResponse.id}.jpg" // Fallback poster logic if needed, or leave blank
+        }
+    }
+
+    // --- SEARCH (Powered entirely by Local Storage) ---
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
-        val base = apiBase()
-        val results = mutableListOf<SearchResponse>()
-
-        try {
-            for (page in 1..5) {
-                val res = app.get("$base/api/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&page=$page", referer = "$base/")
-                val parsed = parseJson<ApiSearchResponse>(res.text)
-                
-                val movies = parsed.movies
-                val series = parsed.series
-                
-                if (movies.isNullOrEmpty() && series.isNullOrEmpty()) break
-                
-                movies?.forEach { m -> m.toSearchResponse("movie")?.let { results.add(it) } }
-                series?.forEach { s -> s.toSearchResponse("series")?.let { results.add(it) } }
-                
-                if ((movies?.size ?: 0) < 20 && (series?.size ?: 0) < 20) break
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "search: ${e.message}")
-        }
-
-        return results
+        val allRecords = HDGharTVStorage.getAll()
+        return allRecords.filter { it.title.contains(query, ignoreCase = true) }.map { it.toSearchResponse() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val loadData = try {
-            parseJson<LoadData>(url)
-        } catch (e: Exception) {
-            Log.e(TAG, "load: ${e.message}")
-            return null
-        }
-
+        val loadData = try { parseJson<LoadData>(url) } catch (e: Exception) { return null }
         val base = apiBase()
 
         return try {
-            when (loadData.type) {
-                "movie" -> {
-                    val res = app.get("$base/api/movies/public/${loadData.id}", referer = "$base/")
-                    val movie = parseJson<MediaItem>(res.text)
-                    val title = movie.title ?: movie.originalTitle ?: loadData.title
-                    val streams = movie.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
+            val endpoint = if (loadData.type == "movie") "movies" else "series"
+            val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
+            val item = parseJson<MediaItem>(res.text)
+            val title = item.title ?: item.originalTitle ?: loadData.title
+            val streams = item.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
 
-                    // Build UI Tags (Genres + Languages + Countries)
-                    val tags = mutableListOf<String>()
-                    movie.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
-                    movie.spokenLanguages?.mapNotNull { it.englishName }?.let { tags.addAll(it) }
-                    movie.productionCountries?.mapNotNull { it.name }?.let { tags.addAll(it) }
+            val tags = mutableListOf<String>()
+            item.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
+            item.spokenLanguages?.mapNotNull { it.englishName }?.let { tags.addAll(it) }
+            item.productionCountries?.mapNotNull { it.name }?.let { tags.addAll(it) }
 
-                    newMovieLoadResponse(title, url, TvType.Movie, streams.toJson()) {
-                        this.posterUrl = movie.posterPath ?: loadData.posterUrl
-                        this.backgroundPosterUrl = movie.backdropPath
-                        this.plot = movie.overview
-                        this.year = movie.releaseDate?.substring(0, 4)?.toIntOrNull()
-                        this.tags = tags
-                        this.duration = movie.runtime
-                        this.score = movie.voteAverage?.let { Score.from10(it.toString()) }
-                        this.contentRating = movie.certification ?: movie.contentRating
+            if (loadData.type == "movie") {
+                newMovieLoadResponse(title, url, TvType.Movie, streams.toJson()) {
+                    this.posterUrl = item.posterPath ?: loadData.posterUrl
+                    this.backgroundPosterUrl = item.backdropPath
+                    this.plot = item.overview
+                    this.year = item.releaseDate?.substring(0, 4)?.toIntOrNull()
+                    this.tags = tags
+                    this.duration = item.runtime
+                    this.score = item.voteAverage?.let { Score.from10(it.toString()) }
+                    this.contentRating = item.certification ?: item.contentRating
+                }
+            } else {
+                val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
+                item.seasons?.forEach { season ->
+                    val seasonNum = season.seasonNumber ?: return@forEach
+                    season.episodes?.forEach { ep ->
+                        val epNum = ep.episodeNumber ?: return@forEach
+                        val epStreams = ep.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
+                        episodes.add(newEpisode(epStreams.toJson()) {
+                            this.name = ep.name ?: "Episode $epNum"
+                            this.season = seasonNum
+                            this.episode = epNum
+                            this.posterUrl = ep.stillPath
+                            this.description = ep.overview
+                            this.runTime = ep.runtime
+                        })
                     }
                 }
-                "series" -> {
-                    val res = app.get("$base/api/series/public/${loadData.id}", referer = "$base/")
-                    val series = parseJson<MediaItem>(res.text)
-                    val title = series.title ?: series.originalTitle ?: loadData.title
-
-                    val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
-                    series.seasons?.forEach { season ->
-                        val seasonNum = season.seasonNumber ?: return@forEach
-                        season.episodes?.forEach { ep ->
-                            val epNum = ep.episodeNumber ?: return@forEach
-                            val streams = ep.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
-                            val epData = streams.toJson()
-
-                            episodes.add(
-                                newEpisode(epData) {
-                                    this.name = ep.name ?: "Episode $epNum"
-                                    this.season = seasonNum
-                                    this.episode = epNum
-                                    this.posterUrl = ep.stillPath
-                                    this.description = ep.overview
-                                    this.runTime = ep.runtime
-                                }
-                            )
-                        }
-                    }
-
-                    val tags = mutableListOf<String>()
-                    series.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
-                    series.spokenLanguages?.mapNotNull { it.englishName }?.let { tags.addAll(it) }
-                    series.productionCountries?.mapNotNull { it.name }?.let { tags.addAll(it) }
-
-                    newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                        this.posterUrl = series.posterPath ?: loadData.posterUrl
-                        this.backgroundPosterUrl = series.backdropPath
-                        this.plot = series.overview
-                        this.year = series.firstAirDate?.substring(0, 4)?.toIntOrNull()
-                        this.tags = tags
-                        this.score = series.voteAverage?.let { Score.from10(it.toString()) }
-                        this.contentRating = series.certification ?: series.contentRating
-                    }
+                newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                    this.posterUrl = item.posterPath ?: loadData.posterUrl
+                    this.backgroundPosterUrl = item.backdropPath
+                    this.plot = item.overview
+                    this.year = item.firstAirDate?.substring(0, 4)?.toIntOrNull()
+                    this.tags = tags
+                    this.score = item.voteAverage?.let { Score.from10(it.toString()) }
+                    this.contentRating = item.certification ?: item.contentRating
                 }
-                else -> null
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "load: ${e.message}")
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        data: String, isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val streams = try {
-            parseJson<List<StreamLink>>(data)
-        } catch (e: Exception) {
-            Log.e(TAG, "loadLinks: ${e.message}")
-            return false
-        }
-
+        val streams = try { parseJson<List<StreamLink>>(data) } catch (e: Exception) { return false }
         if (streams.isEmpty()) return false
-
         val base = apiBase()
         var found = false
 
@@ -408,29 +330,15 @@ class HDGharTVSmartProvider : MainAPI() {
                 "Referer" to "$base/"
             )
             if (stream.headers?.isNotBlank() == true) {
-                try {
-                    val extraHeaders = parseJson<Map<String, String>>(stream.headers)
-                    headers.putAll(extraHeaders)
-                } catch (_: Exception) {}
+                try { headers.putAll(parseJson<Map<String, String>>(stream.headers)) } catch (_: Exception) {}
             }
-            if (stream.userAgent?.isNotBlank() == true) {
-                headers["User-Agent"] = stream.userAgent
-            }
+            if (stream.userAgent?.isNotBlank() == true) headers["User-Agent"] = stream.userAgent
 
-            callback.invoke(
-                newExtractorLink(
-                    source = this.name,
-                    name = stream.quality ?: "Unknown",
-                    url = url,
-                    type = type
-                ) {
-                    this.quality = quality
-                    this.headers = headers
-                }
-            )
+            callback.invoke(newExtractorLink(this.name, stream.quality ?: "Unknown", url, type) {
+                this.quality = quality; this.headers = headers
+            })
             found = true
         }
-
         return found
     }
 }
