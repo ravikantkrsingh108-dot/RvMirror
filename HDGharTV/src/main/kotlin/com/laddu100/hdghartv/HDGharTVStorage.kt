@@ -22,13 +22,18 @@ object HDGharTVStorage {
         val releaseDate: String = "",
         val firstAirDate: String = "",
         val genres: List<String> = emptyList(),
-        val category: String = "",
-        val languages: List<String> = emptyList(),
+        val categories: List<String> = emptyList(),
+        val networks: List<String> = emptyList(),
+        val studios: List<String> = emptyList(),
+        val collection: String = "",
+        val originalLanguage: String = "",
+        val spokenLanguages: List<String> = emptyList(),
         val voteAverage: Double = 0.0,
+        val viewCount: Int = 0,
+        val popularity: Double = 0.0,
         val runtime: Int = 0,
         val status: String = "",
         val certification: String = "",
-        val productionCompanies: List<String> = emptyList(),
         val cast: List<CastMember> = emptyList(),
         val ts: Long = System.currentTimeMillis()
     )
@@ -99,10 +104,10 @@ object HDGharTVStorage {
     }
 }
 
-// Moved outside the object so they are top-level extension functions
+// Top-level extension functions
 fun HDGharTVStorage.MediaRecord.getRegion(): String {
-    if (category.isNotBlank()) return category
-    val langs = languages.joinToString(",").lowercase()
+    if (categories.isNotEmpty()) return categories.first()
+    val langs = spokenLanguages.joinToString(",").lowercase()
     return when {
         langs.contains("hindi") -> "Bollywood"
         langs.contains("korean") -> "Korean"
