@@ -155,31 +155,40 @@ open class BaseHDGharProvider : MainAPI() {
             val title = item.title ?: item.originalTitle ?: loadData.title
             val streams = item.streamingLinks?.filter { link -> link.isActive != false && !link.url.isNullOrBlank() } ?: emptyList()
 
+            // Explicitly build Tags to avoid type inference issues
             val tags = mutableListOf<String>()
-            item.genres?.mapNotNull { g -> g.name }?.let { list -> tags.addAll(list) }
-            item.spokenLanguages?.mapNotNull { l -> l.englishName ?: l.name }?.let { list -> tags.addAll(list) }
-            item.categories?.let { list -> tags.addAll(list) }
-            item.networks?.mapNotNull { n -> n.name }?.let { list -> tags.addAll(list) }
-            item.productionCompanies?.mapNotNull { p -> p.name }?.let { list -> tags.addAll(list) }
+            item.genres?.forEach { g -> g.name?.let { name -> tags.add(name) } }
+            item.spokenLanguages?.forEach { l -> (l.englishName ?: l.name)?.let { name -> tags.add(name) } }
+            item.categories?.forEach { c -> tags.add(c) }
+            item.networks?.forEach { n -> n.name?.let { name -> tags.add(name) } }
+            item.productionCompanies?.forEach { p -> p.name?.let { name -> tags.add(name) } }
 
-            val actors = item.cast?.mapNotNull { c -> 
-                val name = c.name ?: return@mapNotNull null
-                ActorData(Actor(name), roleString = c.character) 
-            } ?: emptyList()
+            // Explicitly build Cast List
+            val actors = mutableListOf<ActorData>()
+            item.cast?.forEach { c ->
+                val name = c.name
+                if (!name.isNullOrBlank()) {
+                    actors.add(ActorData(Actor(name), roleString = c.character))
+                }
+            }
             
             val cert = item.certifications?.firstOrNull { c -> !c.certification.isNullOrBlank() }?.certification ?: item.contentRating
 
-            val extraInfo = buildString {
-                item.collection?.name?.takeIf { colName -> colName.isNotBlank() }?.let { colName -> append("🎞️ Collection: $colName\n") }
-                item.releaseDate?.takeIf { rd -> rd.isNotBlank() }?.let { rd -> append("📅 Release Date: $rd\n") }
-                item.firstAirDate?.takeIf { fad -> fad.isNotBlank() }?.let { fad -> append("📅 First Air Date: $fad\n") }
-                item.originalLanguage?.takeIf { ol -> ol.isNotBlank() }?.let { ol -> append("🗣️ Language: ${ol.replaceFirstChar { c -> c.uppercase() }}\n") }
-                item.voteCount?.takeIf { vc -> vc > 0 }?.let { vc -> append("🗳️ Vote Count: ${formatNumber(vc)}\n") }
-                item.viewCount?.takeIf { vc -> vc > 0 }?.let { vc -> append("👁️ Views: ${formatNumber(vc)}\n") }
-                item.popularity?.takeIf { pop -> pop > 0.0 }?.let { pop -> append("📊 Popularity: ${"%.2f".format(pop)}\n") }
-                item.status?.takeIf { st -> st.isNotBlank() }?.let { st -> append("📌 Status: $st\n") }
-            }
-            val finalPlot = if (extraInfo.isNotBlank()) "${item.overview?.trim()}\n\n--- Info ---\n$extraInfo".trim() else item.overview?.trim()
+            // Explicitly build Extra Info Block
+            val extraInfo = StringBuilder()
+            item.collection?.name?.takeIf { it.isNotBlank() }?.let { extraInfo.append("🎞️ Collection: $it\n") }
+            item.releaseDate?.takeIf { it.isNotBlank() }?.let { extraInfo.append("📅 Release Date: $it\n") }
+            item.firstAirDate?.takeIf { it.isNotBlank() }?.let { extraInfo.append("📅 First Air Date: $it\n") }
+            item.originalLanguage?.takeIf { it.isNotBlank() }?.let { extraInfo.append("🗣️ Language: ${it.replaceFirstChar { c -> c.uppercase() }}\n") }
+            item.voteCount?.takeIf { it > 0 }?.let { extraInfo.append("🗳️ Vote Count: ${formatNumber(it)}\n") }
+            item.viewCount?.takeIf { it > 0 }?.let { extraInfo.append("👁️ Views: ${formatNumber(it)}\n") }
+            item.popularity?.takeIf { it > 0.0 }?.let { extraInfo.append("📊 Popularity: ${"%.2f".format(it)}\n") }
+            item.status?.takeIf { it.isNotBlank() }?.let { extraInfo.append("📌 Status: $it\n") }
+            
+            val finalPlot = if (extraInfo.isNotEmpty()) "${item.overview?.trim()}\n\n--- Info ---\n$extraInfo".trim() else item.overview?.trim()
+
+            // Explicitly parse Score to avoid type inference issues
+            val scoreVal: Score? = if (item.voteAverage != null) Score.from10(item.voteAverage.toString()) else null
 
             if (loadData.type == "movie") {
                 newMovieLoadResponse(title, url, TvType.Movie, streams.toJson()) {
@@ -189,7 +198,7 @@ open class BaseHDGharProvider : MainAPI() {
                     this.year = item.releaseDate?.substring(0, 4)?.toIntOrNull()
                     this.tags = tags
                     this.duration = item.runtime
-                    this.score = item.voteAverage?.let { Score.from10(it.toString()) }
+                    this.score = scoreVal
                     this.contentRating = cert
                     this.actors = actors
                 }
@@ -218,7 +227,7 @@ open class BaseHDGharProvider : MainAPI() {
                     this.plot = finalPlot
                     this.year = item.firstAirDate?.substring(0, 4)?.toIntOrNull()
                     this.tags = tags
-                    this.score = item.voteAverage?.let { Score.from10(it.toString()) }
+                    this.score = scoreVal
                     this.contentRating = cert
                     this.actors = actors
                 }
