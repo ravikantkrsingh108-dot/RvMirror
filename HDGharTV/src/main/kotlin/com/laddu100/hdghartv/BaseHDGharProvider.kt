@@ -34,39 +34,43 @@ open class BaseHDGharProvider : MainAPI() {
     protected val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile protected var crawling = false
 
+    // API Data Classes (Prefixed with 'Api' to avoid collisions with CloudStream classes)
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class StreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
+    data class ApiStreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
+    
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class Episode(@JsonProperty("episodeNumber") val episodeNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("stillPath") val stillPath: String? = null, @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("streamingLinks") val streamingLinks: List<StreamLink>? = null)
+    data class ApiEpisode(@JsonProperty("episodeNumber") val episodeNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("stillPath") val stillPath: String? = null, @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("streamingLinks") val streamingLinks: List<ApiStreamLink>? = null)
+    
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class Season(@JsonProperty("seasonNumber") val seasonNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("posterPath") val posterPath: String? = null, @JsonProperty("episodes") val episodes: List<Episode>? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class Genre(@JsonProperty("name") val name: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class Company(@JsonProperty("name") val name: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class SpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class Collection(@JsonProperty("name") val name: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class CastMember(@JsonProperty("name") val name: String? = null, @JsonProperty("character") val character: String? = null, @JsonProperty("profilePath") val profilePath: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class Certification(@JsonProperty("certification") val certification: String? = null, @JsonProperty("iso_3166_1") val country: String? = null)
+    data class ApiSeason(@JsonProperty("seasonNumber") val seasonNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("posterPath") val posterPath: String? = null, @JsonProperty("episodes") val episodes: List<ApiEpisode>? = null)
+    
+    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiGenre(@JsonProperty("name") val name: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCompany(@JsonProperty("name") val name: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiSpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCollection(@JsonProperty("name") val name: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCastMember(@JsonProperty("name") val name: String? = null, @JsonProperty("character") val character: String? = null, @JsonProperty("profilePath") val profilePath: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCertification(@JsonProperty("certification") val certification: String? = null, @JsonProperty("iso_3166_1") val country: String? = null)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    data class MediaItem(
+    data class ApiMediaItem(
         @JsonProperty("_id") val id: String? = null, @JsonProperty("title") val title: String? = null, @JsonProperty("originalTitle") val originalTitle: String? = null,
         @JsonProperty("overview") val overview: String? = null, @JsonProperty("posterPath") val posterPath: String? = null, @JsonProperty("backdropPath") val backdropPath: String? = null,
         @JsonProperty("releaseDate") val releaseDate: String? = null, @JsonProperty("firstAirDate") val firstAirDate: String? = null,
-        @JsonProperty("genres") val genres: List<Genre>? = null, @JsonProperty("categories") val categories: List<String>? = null,
-        @JsonProperty("networks") val networks: List<Company>? = null, @JsonProperty("productionCompanies") val productionCompanies: List<Company>? = null,
-        @JsonProperty("belongs_to_collection") val collection: Collection? = null, @JsonProperty("originalLanguage") val originalLanguage: String? = null,
-        @JsonProperty("spokenLanguages") val spokenLanguages: List<SpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
+        @JsonProperty("genres") val genres: List<ApiGenre>? = null, @JsonProperty("categories") val categories: List<String>? = null,
+        @JsonProperty("networks") val networks: List<ApiCompany>? = null, @JsonProperty("productionCompanies") val productionCompanies: List<ApiCompany>? = null,
+        @JsonProperty("belongs_to_collection") val collection: ApiCollection? = null, @JsonProperty("originalLanguage") val originalLanguage: String? = null,
+        @JsonProperty("spokenLanguages") val spokenLanguages: List<ApiSpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
         @JsonProperty("voteCount") val voteCount: Int? = null, @JsonProperty("viewCount") val viewCount: Int? = null, @JsonProperty("popularity") val popularity: Double? = null,
         @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("status") val status: String? = null,
-        @JsonProperty("certifications") val certifications: List<Certification>? = null, @JsonProperty("contentRating") val contentRating: String? = null,
-        @JsonProperty("cast") val cast: List<CastMember>? = null, @JsonProperty("streamingLinks") val streamingLinks: List<StreamLink>? = null,
-        @JsonProperty("seasons") val seasons: List<Season>? = null
+        @JsonProperty("certifications") val certifications: List<ApiCertification>? = null, @JsonProperty("contentRating") val contentRating: String? = null,
+        @JsonProperty("cast") val cast: List<ApiCastMember>? = null, @JsonProperty("streamingLinks") val streamingLinks: List<ApiStreamLink>? = null,
+        @JsonProperty("seasons") val seasons: List<ApiSeason>? = null
     )
 
-    @JsonIgnoreProperties(ignoreUnknown = true) data class MediaListResponse(@JsonProperty("data") val data: List<MediaItem>? = null, @JsonProperty("totalPages") val totalPages: Int? = null, @JsonProperty("total") val total: Int? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiMediaListResponse(@JsonProperty("data") val data: List<ApiMediaItem>? = null, @JsonProperty("totalPages") val totalPages: Int? = null, @JsonProperty("total") val total: Int? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class LoadData(val id: String, val type: String, val title: String, val posterUrl: String? = null)
 
-    protected fun MediaItem.toLocalRecord(type: String): HDGharTVStorage.MediaRecord? {
+    protected fun ApiMediaItem.toLocalRecord(type: String): HDGharTVStorage.MediaRecord? {
         val id = id ?: return null
         val title = title ?: originalTitle ?: return null
         val cert = certifications?.firstOrNull { !it.certification.isNullOrBlank() }?.certification ?: contentRating ?: ""
@@ -90,14 +94,14 @@ open class BaseHDGharProvider : MainAPI() {
             try {
                 for (i in 1..2) {
                     val mRes = app.get("$base/api/movies/public?page=$i&limit=50", referer = "$base/").text
-                    val mParsed = parseJson<MediaListResponse>(mRes)
+                    val mParsed = parseJson<ApiMediaListResponse>(mRes)
                     val mRecords = mParsed.data?.mapNotNull { it.toLocalRecord("movie") } ?: emptyList()
                     if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
                     if (mParsed.data?.size ?: 0 < 50) break
                 }
                 for (i in 1..2) {
                     val sRes = app.get("$base/api/series/public?page=$i&limit=50", referer = "$base/").text
-                    val sParsed = parseJson<MediaListResponse>(sRes)
+                    val sParsed = parseJson<ApiMediaListResponse>(sRes)
                     val sRecords = sParsed.data?.mapNotNull { it.toLocalRecord("series") } ?: emptyList()
                     if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
                     if (sParsed.data?.size ?: 0 < 50) break
@@ -117,14 +121,14 @@ open class BaseHDGharProvider : MainAPI() {
                     val limit = 50
                     for (i in 1..2) {
                         val mRes = app.get("$base/api/movies/public?page=$moviePage&limit=$limit", referer = "$base/").text
-                        val mParsed = parseJson<MediaListResponse>(mRes)
+                        val mParsed = parseJson<ApiMediaListResponse>(mRes)
                         val mRecords = mParsed.data?.mapNotNull { it.toLocalRecord("movie") } ?: emptyList()
                         if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
                         if (mParsed.data?.size ?: 0 < limit) moviePage = 1 else moviePage++
                     }
                     for (i in 1..2) {
                         val sRes = app.get("$base/api/series/public?page=$seriesPage&limit=$limit", referer = "$base/").text
-                        val sParsed = parseJson<MediaListResponse>(sRes)
+                        val sParsed = parseJson<ApiMediaListResponse>(sRes)
                         val sRecords = sParsed.data?.mapNotNull { it.toLocalRecord("series") } ?: emptyList()
                         if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
                         if (sParsed.data?.size ?: 0 < limit) seriesPage = 1 else seriesPage++
@@ -147,7 +151,7 @@ open class BaseHDGharProvider : MainAPI() {
             val endpoint = if (loadData.type == "movie") "movies" else "series"
             val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
             
-            val item = tryParseJson<MediaItem>(res.text) ?: return null
+            val item = tryParseJson<ApiMediaItem>(res.text) ?: return null
             val title = item.title ?: item.originalTitle ?: loadData.title
             val streams = item.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
 
@@ -228,7 +232,7 @@ open class BaseHDGharProvider : MainAPI() {
     }
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
-        val streams = try { parseJson<List<StreamLink>>(data) } catch (e: Exception) { return false }
+        val streams = try { parseJson<List<ApiStreamLink>>(data) } catch (e: Exception) { return false }
         if (streams.isEmpty()) return false
         val base = apiBase()
         var found = false
