@@ -48,7 +48,6 @@ open class BaseHDGharProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiGenre(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCompany(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiSpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCollection(@JsonProperty("name") val name: String? = null) // Added back
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCastMember(@JsonProperty("name") val name: String? = null, @JsonProperty("character") val character: String? = null, @JsonProperty("profilePath") val profilePath: String? = null)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -58,7 +57,8 @@ open class BaseHDGharProvider : MainAPI() {
         @JsonProperty("releaseDate") val releaseDate: String? = null, @JsonProperty("firstAirDate") val firstAirDate: String? = null,
         @JsonProperty("genres") val genres: List<ApiGenre>? = null, @JsonProperty("categories") val categories: List<String>? = null,
         @JsonProperty("networks") val networks: List<ApiCompany>? = null, @JsonProperty("productionCompanies") val productionCompanies: List<ApiCompany>? = null,
-        @JsonProperty("Collection") val collection: ApiCollection? = null, 
+        // Changed to Any? to handle both Object and String responses from the API
+        @JsonProperty("collection") val collection: Any? = null, 
         @JsonProperty("originalLanguage") val originalLanguage: String? = null,
         @JsonProperty("spokenLanguages") val spokenLanguages: List<ApiSpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
         @JsonProperty("voteCount") val voteCount: Int? = null, @JsonProperty("viewCount") val viewCount: Int? = null, @JsonProperty("popularity") val popularity: Double? = null,
@@ -75,8 +75,6 @@ open class BaseHDGharProvider : MainAPI() {
     // Helper to extract certification prioritizing US and IN
     private fun extractCertification(certs: List<Any>?): String {
         if (certs.isNullOrEmpty()) return ""
-        
-        // First pass: Look specifically for US and IN country codes
         for (c in certs) {
             val str = when (c) {
                 is String -> c
@@ -86,12 +84,10 @@ open class BaseHDGharProvider : MainAPI() {
             if (str != null) {
                 val parts = str.split(" ")
                 if (parts.size == 2 && (parts[0].equals("US", true) || parts[0].equals("IN", true))) {
-                    return parts[1] // Return just the rating part
+                    return parts[1]
                 }
             }
         }
-        
-        // Fallback: If US/IN not found, return the first available certification string
         return certs.mapNotNull { c ->
             when (c) {
                 is String -> c
@@ -101,10 +97,21 @@ open class BaseHDGharProvider : MainAPI() {
         }.firstOrNull { it.isNotBlank() } ?: ""
     }
 
+    // Helper to extract collection name from Any? type
+    private fun extractCollectionName(c: Any?): String {
+        return when (c) {
+            is String -> c
+            is Map<*, *> -> c["name"]?.toString()
+            else -> null
+        } ?: ""
+    }
+
     protected fun ApiMediaItem.toLocalRecord(type: String): HDGharTVStorage.MediaRecord? {
         val recordId = id ?: return null
         val recordTitle = title ?: originalTitle ?: return null
         val cert = extractCertification(certifications).ifBlank { contentRating ?: "" }
+        val colName = extractCollectionName(collection)
+        
         return HDGharTVStorage.MediaRecord(
             id = recordId, type = type, title = recordTitle, overview = overview ?: "", posterPath = posterPath ?: "",
             backdropPath = backdropPath ?: "", releaseDate = releaseDate ?: "", firstAirDate = firstAirDate ?: "",
@@ -112,7 +119,7 @@ open class BaseHDGharProvider : MainAPI() {
             categories = categories ?: emptyList(),
             networks = if (!networks.isNullOrEmpty()) networks.mapNotNull { n -> n.name } else emptyList(),
             studios = if (!productionCompanies.isNullOrEmpty()) productionCompanies.mapNotNull { p -> p.name } else emptyList(),
-            collection = collection?.name ?: "", originalLanguage = originalLanguage ?: "",
+            collection = colName, originalLanguage = originalLanguage ?: "",
             spokenLanguages = if (!spokenLanguages.isNullOrEmpty()) spokenLanguages.mapNotNull { l -> l.englishName ?: l.name } else emptyList(),
             voteAverage = voteAverage ?: 0.0, viewCount = voteCount ?: viewCount ?: 0, popularity = popularity ?: 0.0,
             runtime = runtime ?: 0, status = status ?: "", certification = cert,
@@ -215,10 +222,10 @@ open class BaseHDGharProvider : MainAPI() {
             }
             
             val cert = extractCertification(item.certifications).ifBlank { item.contentRating }
+            val collectionName = extractCollectionName(item.collection)
 
             val extraInfo = StringBuilder()
-            val collectionName = item.collection?.name
-            if (!collectionName.isNullOrBlank()) extraInfo.append("🎞️ Collection: $collectionName\n")
+            if (collectionName.isNotBlank()) extraInfo.append("🎞️ Collection: $collectionName\n")
             val releaseDate = item.releaseDate
             if (!releaseDate.isNullOrBlank()) extraInfo.append("📅 Release Date: $releaseDate\n")
             val firstAirDate = item.firstAirDate
