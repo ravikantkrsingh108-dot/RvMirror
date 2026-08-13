@@ -75,20 +75,22 @@ open class BaseHDGharProvider : MainAPI() {
     private fun extractCertification(certs: List<Any>?): String {
         if (certs.isNullOrEmpty()) return ""
         
-        // First pass: Look specifically for US and IN
+        // First pass: Look specifically for US and IN country codes
         for (c in certs) {
-            when (c) {
-                is Map<*, *> -> {
-                    val country = c["iso_3166_1"]?.toString()
-                    val cert = c["certification"]?.toString()
-                    if (!cert.isNullOrBlank() && (country == "US" || country == "IN")) {
-                        return cert
-                    }
+            val str = when (c) {
+                is String -> c
+                is Map<*, *> -> c["certification"]?.toString()
+                else -> null
+            }
+            if (str != null) {
+                val parts = str.split(" ")
+                if (parts.size == 2 && (parts[0].equals("US", true) || parts[0].equals("IN", true))) {
+                    return parts[1] // Return just the rating part
                 }
             }
         }
         
-        // Fallback: If US/IN not found, return the first available certification
+        // Fallback: If US/IN not found, return the first available certification string
         return certs.mapNotNull { c ->
             when (c) {
                 is String -> c
