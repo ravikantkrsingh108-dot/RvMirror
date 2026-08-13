@@ -71,16 +71,16 @@ open class BaseHDGharProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true) data class LoadData(val id: String, val type: String, val title: String, val posterUrl: String? = null)
 
     protected fun ApiMediaItem.toLocalRecord(type: String): HDGharTVStorage.MediaRecord? {
-        val id = id ?: return null
-        val title = title ?: originalTitle ?: return null
-        val cert = certifications?.firstOrNull { !it.certification.isNullOrBlank() }?.certification ?: contentRating ?: ""
+        val recordId = id ?: return null
+        val recordTitle = title ?: originalTitle ?: return null
+        val cert = certifications?.firstOrNull { c -> !c.certification.isNullOrBlank() }?.certification ?: contentRating ?: ""
         return HDGharTVStorage.MediaRecord(
-            id = id, type = type, title = title, overview = overview ?: "", posterPath = posterPath ?: "",
+            id = recordId, type = type, title = recordTitle, overview = overview ?: "", posterPath = posterPath ?: "",
             backdropPath = backdropPath ?: "", releaseDate = releaseDate ?: "", firstAirDate = firstAirDate ?: "",
-            genres = genres?.mapNotNull { it.name } ?: emptyList(), categories = categories ?: emptyList(),
-            networks = networks?.mapNotNull { it.name } ?: emptyList(), studios = productionCompanies?.mapNotNull { it.name } ?: emptyList(),
+            genres = genres?.mapNotNull { g -> g.name } ?: emptyList(), categories = categories ?: emptyList(),
+            networks = networks?.mapNotNull { n -> n.name } ?: emptyList(), studios = productionCompanies?.mapNotNull { p -> p.name } ?: emptyList(),
             collection = collection?.name ?: "", originalLanguage = originalLanguage ?: "",
-            spokenLanguages = spokenLanguages?.mapNotNull { it.englishName ?: it.name } ?: emptyList(),
+            spokenLanguages = spokenLanguages?.mapNotNull { l -> l.englishName ?: l.name } ?: emptyList(),
             voteAverage = voteAverage ?: 0.0, viewCount = voteCount ?: viewCount ?: 0, popularity = popularity ?: 0.0,
             runtime = runtime ?: 0, status = status ?: "", certification = cert,
             cast = cast?.mapNotNull { c -> val name = c.name ?: return@mapNotNull null; HDGharTVStorage.CastMember(name, c.character ?: "", c.profilePath) } ?: emptyList()
@@ -95,14 +95,14 @@ open class BaseHDGharProvider : MainAPI() {
                 for (i in 1..2) {
                     val mRes = app.get("$base/api/movies/public?page=$i&limit=50", referer = "$base/").text
                     val mParsed = parseJson<ApiMediaListResponse>(mRes)
-                    val mRecords = mParsed.data?.mapNotNull { it.toLocalRecord("movie") } ?: emptyList()
+                    val mRecords = mParsed.data?.mapNotNull { item -> item.toLocalRecord("movie") } ?: emptyList()
                     if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
                     if (mParsed.data?.size ?: 0 < 50) break
                 }
                 for (i in 1..2) {
                     val sRes = app.get("$base/api/series/public?page=$i&limit=50", referer = "$base/").text
                     val sParsed = parseJson<ApiMediaListResponse>(sRes)
-                    val sRecords = sParsed.data?.mapNotNull { it.toLocalRecord("series") } ?: emptyList()
+                    val sRecords = sParsed.data?.mapNotNull { item -> item.toLocalRecord("series") } ?: emptyList()
                     if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
                     if (sParsed.data?.size ?: 0 < 50) break
                 }
@@ -122,14 +122,14 @@ open class BaseHDGharProvider : MainAPI() {
                     for (i in 1..2) {
                         val mRes = app.get("$base/api/movies/public?page=$moviePage&limit=$limit", referer = "$base/").text
                         val mParsed = parseJson<ApiMediaListResponse>(mRes)
-                        val mRecords = mParsed.data?.mapNotNull { it.toLocalRecord("movie") } ?: emptyList()
+                        val mRecords = mParsed.data?.mapNotNull { item -> item.toLocalRecord("movie") } ?: emptyList()
                         if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
                         if (mParsed.data?.size ?: 0 < limit) moviePage = 1 else moviePage++
                     }
                     for (i in 1..2) {
                         val sRes = app.get("$base/api/series/public?page=$seriesPage&limit=$limit", referer = "$base/").text
                         val sParsed = parseJson<ApiMediaListResponse>(sRes)
-                        val sRecords = sParsed.data?.mapNotNull { it.toLocalRecord("series") } ?: emptyList()
+                        val sRecords = sParsed.data?.mapNotNull { item -> item.toLocalRecord("series") } ?: emptyList()
                         if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
                         if (sParsed.data?.size ?: 0 < limit) seriesPage = 1 else seriesPage++
                     }
@@ -153,27 +153,31 @@ open class BaseHDGharProvider : MainAPI() {
             
             val item = tryParseJson<ApiMediaItem>(res.text) ?: return null
             val title = item.title ?: item.originalTitle ?: loadData.title
-            val streams = item.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
+            val streams = item.streamingLinks?.filter { link -> link.isActive != false && !link.url.isNullOrBlank() } ?: emptyList()
 
             val tags = mutableListOf<String>()
-            item.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
-            item.spokenLanguages?.mapNotNull { it.englishName ?: it.name }?.let { tags.addAll(it) }
-            item.categories?.let { tags.addAll(it) }
-            item.networks?.mapNotNull { it.name }?.let { tags.addAll(it) }
-            item.productionCompanies?.mapNotNull { it.name }?.let { tags.addAll(it) }
+            item.genres?.mapNotNull { g -> g.name }?.let { list -> tags.addAll(list) }
+            item.spokenLanguages?.mapNotNull { l -> l.englishName ?: l.name }?.let { list -> tags.addAll(list) }
+            item.categories?.let { list -> tags.addAll(list) }
+            item.networks?.mapNotNull { n -> n.name }?.let { list -> tags.addAll(list) }
+            item.productionCompanies?.mapNotNull { p -> p.name }?.let { list -> tags.addAll(list) }
 
-            val actors = item.cast?.mapNotNull { c -> val name = c.name ?: return@mapNotNull null; ActorData(Actor(name), roleString = c.character) } ?: emptyList()
-            val cert = item.certifications?.firstOrNull { !it.certification.isNullOrBlank() }?.certification ?: item.contentRating
+            val actors = item.cast?.mapNotNull { c -> 
+                val name = c.name ?: return@mapNotNull null
+                ActorData(Actor(name), roleString = c.character) 
+            } ?: emptyList()
+            
+            val cert = item.certifications?.firstOrNull { c -> !c.certification.isNullOrBlank() }?.certification ?: item.contentRating
 
             val extraInfo = buildString {
-                item.collection?.name?.takeIf { it.isNotBlank() }?.let { append("🎞️ Collection: $it\n") }
-                item.releaseDate?.takeIf { it.isNotBlank() }?.let { append("📅 Release Date: $it\n") }
-                item.firstAirDate?.takeIf { it.isNotBlank() }?.let { append("📅 First Air Date: $it\n") }
-                item.originalLanguage?.takeIf { it.isNotBlank() }?.let { append("🗣️ Language: ${it.replaceFirstChar { c -> c.uppercase() }}\n") }
-                item.voteCount?.takeIf { it > 0 }?.let { append("🗳️ Vote Count: ${formatNumber(it)}\n") }
-                item.viewCount?.takeIf { it > 0 }?.let { append("👁️ Views: ${formatNumber(it)}\n") }
-                item.popularity?.takeIf { it > 0.0 }?.let { append("📊 Popularity: ${"%.2f".format(it)}\n") }
-                item.status?.takeIf { it.isNotBlank() }?.let { append("📌 Status: $it\n") }
+                item.collection?.name?.takeIf { colName -> colName.isNotBlank() }?.let { colName -> append("🎞️ Collection: $colName\n") }
+                item.releaseDate?.takeIf { rd -> rd.isNotBlank() }?.let { rd -> append("📅 Release Date: $rd\n") }
+                item.firstAirDate?.takeIf { fad -> fad.isNotBlank() }?.let { fad -> append("📅 First Air Date: $fad\n") }
+                item.originalLanguage?.takeIf { ol -> ol.isNotBlank() }?.let { ol -> append("🗣️ Language: ${ol.replaceFirstChar { c -> c.uppercase() }}\n") }
+                item.voteCount?.takeIf { vc -> vc > 0 }?.let { vc -> append("🗳️ Vote Count: ${formatNumber(vc)}\n") }
+                item.viewCount?.takeIf { vc -> vc > 0 }?.let { vc -> append("👁️ Views: ${formatNumber(vc)}\n") }
+                item.popularity?.takeIf { pop -> pop > 0.0 }?.let { pop -> append("📊 Popularity: ${"%.2f".format(pop)}\n") }
+                item.status?.takeIf { st -> st.isNotBlank() }?.let { st -> append("📌 Status: $st\n") }
             }
             val finalPlot = if (extraInfo.isNotBlank()) "${item.overview?.trim()}\n\n--- Info ---\n$extraInfo".trim() else item.overview?.trim()
 
@@ -191,13 +195,13 @@ open class BaseHDGharProvider : MainAPI() {
                 }
             } else {
                 val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
-                val seasonsList = item.seasons ?: emptyList()
+                val seasonsList: List<ApiSeason> = item.seasons ?: emptyList()
                 for (season in seasonsList) {
                     val seasonNum = season.seasonNumber ?: continue
-                    val epsList = season.episodes ?: emptyList()
+                    val epsList: List<ApiEpisode> = season.episodes ?: emptyList()
                     for (ep in epsList) {
                         val epNum = ep.episodeNumber ?: continue
-                        val epStreams = ep.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
+                        val epStreams = ep.streamingLinks?.filter { link -> link.isActive != false && !link.url.isNullOrBlank() } ?: emptyList()
                         episodes.add(newEpisode(epStreams.toJson()) {
                             this.name = ep.name ?: "Episode $epNum"
                             this.season = seasonNum
