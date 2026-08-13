@@ -103,7 +103,6 @@ open class BaseHDGharProvider : MainAPI() {
                     if (sParsed.data?.size ?: 0 < 50) break
                 }
                 allRecords = HDGharTVStorage.getAll()
-                // Wait a brief moment to ensure storage is fully written before UI tries to read it
                 delay(500) 
             } catch (e: Exception) { Log.e(TAG, "Sync Error: ${e.message}") }
         }
@@ -148,7 +147,6 @@ open class BaseHDGharProvider : MainAPI() {
             val endpoint = if (loadData.type == "movie") "movies" else "series"
             val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
             
-            // Use tryParseJson to prevent crashing if the API returns an HTML error page
             val item = tryParseJson<MediaItem>(res.text) ?: return null
             val title = item.title ?: item.originalTitle ?: loadData.title
             val streams = item.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
@@ -196,8 +194,11 @@ open class BaseHDGharProvider : MainAPI() {
                         val epStreams = ep.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
                         episodes.add(newEpisode(epStreams.toJson()) {
                             this.name = ep.name ?: "Episode $epNum"
-                            this.season = seasonNum; this.episode = epNum
-                            this.posterUrl = ep.stillPath; this.description = ep.overview; this.runTime = ep.runtime
+                            this.season = seasonNum
+                            this.episode = epNum
+                            this.posterUrl = ep.stillPath
+                            this.description = ep.overview
+                            this.runTime = ep.runtime
                         })
                     }
                 }
