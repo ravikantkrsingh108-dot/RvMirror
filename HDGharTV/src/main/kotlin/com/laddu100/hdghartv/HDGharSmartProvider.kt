@@ -2,6 +2,7 @@ package com.laddu100.hdghartv
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import com.lagradost.cloudstream3.utils.AppUtils.toJson // Added this import
 
 class HDGharSmartProvider : BaseHDGharProvider() {
     override var name = "HDGhar Smart"
