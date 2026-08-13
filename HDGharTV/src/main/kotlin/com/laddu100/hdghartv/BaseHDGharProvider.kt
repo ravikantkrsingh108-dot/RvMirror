@@ -35,7 +35,7 @@ open class BaseHDGharProvider : MainAPI() {
     protected val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile protected var crawling = false
 
-    // API Data Classes (Prefixed to avoid collisions)
+    // API Data Classes
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiStreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
     
@@ -50,7 +50,6 @@ open class BaseHDGharProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiSpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCollection(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCastMember(@JsonProperty("name") val name: String? = null, @JsonProperty("character") val character: String? = null, @JsonProperty("profilePath") val profilePath: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCertification(@JsonProperty("certification") val certification: String? = null, @JsonProperty("iso_3166_1") val country: String? = null)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiMediaItem(
@@ -63,7 +62,9 @@ open class BaseHDGharProvider : MainAPI() {
         @JsonProperty("spokenLanguages") val spokenLanguages: List<ApiSpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
         @JsonProperty("voteCount") val voteCount: Int? = null, @JsonProperty("viewCount") val viewCount: Int? = null, @JsonProperty("popularity") val popularity: Double? = null,
         @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("status") val status: String? = null,
-        @JsonProperty("certifications") val certifications: List<ApiCertification>? = null, @JsonProperty("contentRating") val contentRating: String? = null,
+        // Changed to List<Any> to handle inconsistent API responses (Strings vs Objects)
+        @JsonProperty("certifications") val certifications: List<Any>? = null, 
+        @JsonProperty("contentRating") val contentRating: String? = null,
         @JsonProperty("cast") val cast: List<ApiCastMember>? = null, @JsonProperty("streamingLinks") val streamingLinks: List<ApiStreamLink>? = null,
         @JsonProperty("seasons") val seasons: List<ApiSeason>? = null
     )
@@ -71,10 +72,22 @@ open class BaseHDGharProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiMediaListResponse(@JsonProperty("data") val data: List<ApiMediaItem>? = null, @JsonProperty("totalPages") val totalPages: Int? = null, @JsonProperty("total") val total: Int? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class LoadData(val id: String, val type: String, val title: String, val posterUrl: String? = null)
 
+    // Helper to extract certification from mixed list types
+    private fun extractCertification(certs: List<Any>?): String {
+        if (certs.isNullOrEmpty()) return ""
+        return certs.mapNotNull { c ->
+            when (c) {
+                is String -> c
+                is Map<*, *> -> c["certification"]?.toString()
+                else -> null
+            }
+        }.firstOrNull { it.isNotBlank() } ?: ""
+    }
+
     protected fun ApiMediaItem.toLocalRecord(type: String): HDGharTVStorage.MediaRecord? {
         val recordId = id ?: return null
         val recordTitle = title ?: originalTitle ?: return null
-        val cert = if (!certifications.isNullOrEmpty()) certifications.firstOrNull { c -> !c.certification.isNullOrBlank() }?.certification else contentRating ?: ""
+        val cert = extractCertification(certifications).ifBlank { contentRating ?: "" }
         return HDGharTVStorage.MediaRecord(
             id = recordId, type = type, title = recordTitle, overview = overview ?: "", posterPath = posterPath ?: "",
             backdropPath = backdropPath ?: "", releaseDate = releaseDate ?: "", firstAirDate = firstAirDate ?: "",
@@ -85,7 +98,7 @@ open class BaseHDGharProvider : MainAPI() {
             collection = collection?.name ?: "", originalLanguage = originalLanguage ?: "",
             spokenLanguages = if (!spokenLanguages.isNullOrEmpty()) spokenLanguages.mapNotNull { l -> l.englishName ?: l.name } else emptyList(),
             voteAverage = voteAverage ?: 0.0, viewCount = voteCount ?: viewCount ?: 0, popularity = popularity ?: 0.0,
-            runtime = runtime ?: 0, status = status ?: "", certification = cert ?: "",
+            runtime = runtime ?: 0, status = status ?: "", certification = cert,
             cast = if (!cast.isNullOrEmpty()) cast.mapNotNull { c -> val name = c.name ?: return@mapNotNull null; HDGharTVStorage.CastMember(name, c.character ?: "", c.profilePath) } else emptyList()
         )
     }
@@ -96,7 +109,6 @@ open class BaseHDGharProvider : MainAPI() {
         if (allRecords.isEmpty()) {
             try {
                 for (i in 1..2) {
-                    // Removed browserHeaders
                     val mRes = app.get("$base/api/movies/public?page=$i&limit=50", referer = "$base/").text
                     val mParsed = tryParseJson<ApiMediaListResponse>(mRes)
                     val mRecords = if (mParsed != null && !mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
@@ -152,7 +164,6 @@ open class BaseHDGharProvider : MainAPI() {
         val base = apiBase()
         return try {
             val endpoint = if (loadData.type == "movie") "movies" else "series"
-            // Removed browserHeaders
             val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
             
             val item = tryParseJson<ApiMediaItem>(res.text) ?: return null
@@ -179,7 +190,7 @@ open class BaseHDGharProvider : MainAPI() {
                 }
             }
             
-            val cert = if (!item.certifications.isNullOrEmpty()) item.certifications.firstOrNull { c -> !c.certification.isNullOrBlank() }?.certification else item.contentRating
+            val cert = extractCertification(item.certifications).ifBlank { item.contentRating }
 
             val extraInfo = StringBuilder()
             val collectionName = item.collection?.name
