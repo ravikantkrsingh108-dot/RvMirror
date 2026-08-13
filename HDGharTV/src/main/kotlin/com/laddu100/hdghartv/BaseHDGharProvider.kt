@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 open class BaseHDGharProvider : MainAPI() {
     override var mainUrl = "https://hdghartv.cc"
@@ -33,7 +34,6 @@ open class BaseHDGharProvider : MainAPI() {
     protected val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile protected var crawling = false
 
-    // API Data Classes
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class StreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -69,10 +69,7 @@ open class BaseHDGharProvider : MainAPI() {
     protected fun MediaItem.toLocalRecord(type: String): HDGharTVStorage.MediaRecord? {
         val id = id ?: return null
         val title = title ?: originalTitle ?: return null
-        
-        // Extract first available certification (e.g., "AU M" -> "M")
         val cert = certifications?.firstOrNull { !it.certification.isNullOrBlank() }?.certification ?: contentRating ?: ""
-
         return HDGharTVStorage.MediaRecord(
             id = id, type = type, title = title, overview = overview ?: "", posterPath = posterPath ?: "",
             backdropPath = backdropPath ?: "", releaseDate = releaseDate ?: "", firstAirDate = firstAirDate ?: "",
@@ -106,6 +103,8 @@ open class BaseHDGharProvider : MainAPI() {
                     if (sParsed.data?.size ?: 0 < 50) break
                 }
                 allRecords = HDGharTVStorage.getAll()
+                // Wait a brief moment to ensure storage is fully written before UI tries to read it
+                delay(500) 
             } catch (e: Exception) { Log.e(TAG, "Sync Error: ${e.message}") }
         }
 
@@ -148,11 +147,12 @@ open class BaseHDGharProvider : MainAPI() {
         return try {
             val endpoint = if (loadData.type == "movie") "movies" else "series"
             val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
-            val item = parseJson<MediaItem>(res.text) ?: return null
+            
+            // Use tryParseJson to prevent crashing if the API returns an HTML error page
+            val item = tryParseJson<MediaItem>(res.text) ?: return null
             val title = item.title ?: item.originalTitle ?: loadData.title
             val streams = item.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
 
-            // 1. Build UI Tags
             val tags = mutableListOf<String>()
             item.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
             item.spokenLanguages?.mapNotNull { it.englishName ?: it.name }?.let { tags.addAll(it) }
@@ -160,13 +160,9 @@ open class BaseHDGharProvider : MainAPI() {
             item.networks?.mapNotNull { it.name }?.let { tags.addAll(it) }
             item.productionCompanies?.mapNotNull { it.name }?.let { tags.addAll(it) }
 
-            // 2. Build Cast List
             val actors = item.cast?.mapNotNull { c -> val name = c.name ?: return@mapNotNull null; ActorData(Actor(name), roleString = c.character) } ?: emptyList()
-            
-            // 3. Extract Certification
             val cert = item.certifications?.firstOrNull { !it.certification.isNullOrBlank() }?.certification ?: item.contentRating
 
-            // 4. Build Extra Info Block (Formatted UI)
             val extraInfo = buildString {
                 item.collection?.name?.takeIf { it.isNotBlank() }?.let { append("🎞️ Collection: $it\n") }
                 item.releaseDate?.takeIf { it.isNotBlank() }?.let { append("📅 Release Date: $it\n") }
@@ -216,7 +212,10 @@ open class BaseHDGharProvider : MainAPI() {
                     this.actors = actors
                 }
             }
-        } catch (e: Exception) { Log.e(TAG, "load: ${e.message}"); null }
+        } catch (e: Exception) { 
+            Log.e(TAG, "load: ${e.message}")
+            null 
+        }
     }
 
     private fun formatNumber(count: Int): String {
