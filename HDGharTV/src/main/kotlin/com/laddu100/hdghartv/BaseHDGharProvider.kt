@@ -45,6 +45,7 @@ open class BaseHDGharProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true) data class SpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class Collection(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class CastMember(@JsonProperty("name") val name: String? = null, @JsonProperty("character") val character: String? = null, @JsonProperty("profilePath") val profilePath: String? = null)
+    @JsonIgnoreProperties(ignoreUnknown = true) data class Certification(@JsonProperty("certification") val certification: String? = null, @JsonProperty("iso_3166_1") val country: String? = null)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class MediaItem(
@@ -55,9 +56,9 @@ open class BaseHDGharProvider : MainAPI() {
         @JsonProperty("networks") val networks: List<Company>? = null, @JsonProperty("productionCompanies") val productionCompanies: List<Company>? = null,
         @JsonProperty("belongs_to_collection") val collection: Collection? = null, @JsonProperty("originalLanguage") val originalLanguage: String? = null,
         @JsonProperty("spokenLanguages") val spokenLanguages: List<SpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
-        @JsonProperty("viewCount") val viewCount: Int? = null, @JsonProperty("popularity") val popularity: Double? = null,
+        @JsonProperty("voteCount") val voteCount: Int? = null, @JsonProperty("viewCount") val viewCount: Int? = null, @JsonProperty("popularity") val popularity: Double? = null,
         @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("status") val status: String? = null,
-        @JsonProperty("certification") val certification: String? = null, @JsonProperty("contentRating") val contentRating: String? = null,
+        @JsonProperty("certifications") val certifications: List<Certification>? = null, @JsonProperty("contentRating") val contentRating: String? = null,
         @JsonProperty("cast") val cast: List<CastMember>? = null, @JsonProperty("streamingLinks") val streamingLinks: List<StreamLink>? = null,
         @JsonProperty("seasons") val seasons: List<Season>? = null
     )
@@ -68,6 +69,10 @@ open class BaseHDGharProvider : MainAPI() {
     protected fun MediaItem.toLocalRecord(type: String): HDGharTVStorage.MediaRecord? {
         val id = id ?: return null
         val title = title ?: originalTitle ?: return null
+        
+        // Extract first available certification (e.g., "AU M" -> "M")
+        val cert = certifications?.firstOrNull { !it.certification.isNullOrBlank() }?.certification ?: contentRating ?: ""
+
         return HDGharTVStorage.MediaRecord(
             id = id, type = type, title = title, overview = overview ?: "", posterPath = posterPath ?: "",
             backdropPath = backdropPath ?: "", releaseDate = releaseDate ?: "", firstAirDate = firstAirDate ?: "",
@@ -75,8 +80,8 @@ open class BaseHDGharProvider : MainAPI() {
             networks = networks?.mapNotNull { it.name } ?: emptyList(), studios = productionCompanies?.mapNotNull { it.name } ?: emptyList(),
             collection = collection?.name ?: "", originalLanguage = originalLanguage ?: "",
             spokenLanguages = spokenLanguages?.mapNotNull { it.englishName ?: it.name } ?: emptyList(),
-            voteAverage = voteAverage ?: 0.0, viewCount = viewCount ?: 0, popularity = popularity ?: 0.0,
-            runtime = runtime ?: 0, status = status ?: "", certification = certification ?: contentRating ?: "",
+            voteAverage = voteAverage ?: 0.0, viewCount = voteCount ?: viewCount ?: 0, popularity = popularity ?: 0.0,
+            runtime = runtime ?: 0, status = status ?: "", certification = cert,
             cast = cast?.mapNotNull { c -> val name = c.name ?: return@mapNotNull null; HDGharTVStorage.CastMember(name, c.character ?: "", c.profilePath) } ?: emptyList()
         )
     }
@@ -147,6 +152,7 @@ open class BaseHDGharProvider : MainAPI() {
             val title = item.title ?: item.originalTitle ?: loadData.title
             val streams = item.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
 
+            // 1. Build UI Tags
             val tags = mutableListOf<String>()
             item.genres?.mapNotNull { it.name }?.let { tags.addAll(it) }
             item.spokenLanguages?.mapNotNull { it.englishName ?: it.name }?.let { tags.addAll(it) }
@@ -154,11 +160,21 @@ open class BaseHDGharProvider : MainAPI() {
             item.networks?.mapNotNull { it.name }?.let { tags.addAll(it) }
             item.productionCompanies?.mapNotNull { it.name }?.let { tags.addAll(it) }
 
+            // 2. Build Cast List
             val actors = item.cast?.mapNotNull { c -> val name = c.name ?: return@mapNotNull null; ActorData(Actor(name), roleString = c.character) } ?: emptyList()
+            
+            // 3. Extract Certification
+            val cert = item.certifications?.firstOrNull { !it.certification.isNullOrBlank() }?.certification ?: item.contentRating
+
+            // 4. Build Extra Info Block (Formatted UI)
             val extraInfo = buildString {
                 item.collection?.name?.takeIf { it.isNotBlank() }?.let { append("🎞️ Collection: $it\n") }
+                item.releaseDate?.takeIf { it.isNotBlank() }?.let { append("📅 Release Date: $it\n") }
+                item.firstAirDate?.takeIf { it.isNotBlank() }?.let { append("📅 First Air Date: $it\n") }
                 item.originalLanguage?.takeIf { it.isNotBlank() }?.let { append("🗣️ Language: ${it.replaceFirstChar { c -> c.uppercase() }}\n") }
+                item.voteCount?.takeIf { it > 0 }?.let { append("🗳️ Vote Count: ${formatNumber(it)}\n") }
                 item.viewCount?.takeIf { it > 0 }?.let { append("👁️ Views: ${formatNumber(it)}\n") }
+                item.popularity?.takeIf { it > 0.0 }?.let { append("📊 Popularity: ${"%.2f".format(it)}\n") }
                 item.status?.takeIf { it.isNotBlank() }?.let { append("📌 Status: $it\n") }
             }
             val finalPlot = if (extraInfo.isNotBlank()) "${item.overview?.trim()}\n\n--- Info ---\n$extraInfo".trim() else item.overview?.trim()
@@ -172,7 +188,7 @@ open class BaseHDGharProvider : MainAPI() {
                     this.tags = tags
                     this.duration = item.runtime
                     this.score = item.voteAverage?.let { Score.from10(it.toString()) }
-                    this.contentRating = item.certification ?: item.contentRating
+                    this.contentRating = cert
                     this.actors = actors
                 }
             } else {
@@ -196,7 +212,7 @@ open class BaseHDGharProvider : MainAPI() {
                     this.year = item.firstAirDate?.substring(0, 4)?.toIntOrNull()
                     this.tags = tags
                     this.score = item.voteAverage?.let { Score.from10(it.toString()) }
-                    this.contentRating = item.certification ?: item.contentRating
+                    this.contentRating = cert
                     this.actors = actors
                 }
             }
