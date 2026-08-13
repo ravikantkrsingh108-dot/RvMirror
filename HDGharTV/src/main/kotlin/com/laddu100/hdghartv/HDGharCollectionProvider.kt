@@ -11,7 +11,6 @@ class HDGharCollectionProvider : BaseHDGharProvider() {
         val lists = mutableListOf<HomePageList>()
         val allRecords = HDGharTVStorage.getAll()
         
-        // Group by each collection name inside the list
         val collections = mutableMapOf<String, MutableList<HDGharTVStorage.MediaRecord>>()
         allRecords.forEach { rec ->
             rec.collection.forEach { colName ->
