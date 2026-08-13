@@ -1,14 +1,11 @@
 package com.laddu100.hdghartv
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 
 class HDGharSmartProvider : BaseHDGharProvider() {
     override var name = "HDGhar Smart"
     override val mainPage = mainPageOf("movies" to "All Movies", "series" to "All Series", "smart" to "Smart Catalog")
-
-    // Removed duplicate browserHeaders, it is inherited from BaseHDGharProvider
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val lists = mutableListOf<HomePageList>()
@@ -19,31 +16,37 @@ class HDGharSmartProvider : BaseHDGharProvider() {
         try {
             when (request.data) {
                 "movies" -> {
-                    // Fetch directly from live API for instant loading
                     val res = app.get("$base/api/movies/public?page=$page&limit=$limit", headers = browserHeaders, referer = "$base/")
-                    val parsed = parseJson<ApiMediaListResponse>(res.text)
-                    val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
-                    if (items.isNotEmpty()) lists.add(HomePageList("All Movies (${parsed.total ?: items.size})", items, isHorizontalImages = false))
-                    val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
-                    hasNext = page < totalPages
+                    val parsed = tryParseJson<ApiMediaListResponse>(res.text)
+                    
+                    if (parsed != null) {
+                        val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
+                        if (items.isNotEmpty()) lists.add(HomePageList("All Movies (${parsed.total ?: items.size})", items, isHorizontalImages = false))
+                        val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
+                        hasNext = page < totalPages
+                    } else {
+                        if (page == 1) lists.add(HomePageList("Error loading Movies. The API might be blocked or down.", emptyList(), isHorizontalImages = false))
+                    }
                 }
                 "series" -> {
-                    // Fetch directly from live API for instant loading
                     val res = app.get("$base/api/series/public?page=$page&limit=$limit", headers = browserHeaders, referer = "$base/")
-                    val parsed = parseJson<ApiMediaListResponse>(res.text)
-                    val items = parsed.data?.mapNotNull { it.toSearchResponse("series") } ?: emptyList()
-                    if (items.isNotEmpty()) lists.add(HomePageList("All Series (${parsed.total ?: items.size})", items, isHorizontalImages = false))
-                    val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
-                    hasNext = page < totalPages
+                    val parsed = tryParseJson<ApiMediaListResponse>(res.text)
+                    
+                    if (parsed != null) {
+                        val items = parsed.data?.mapNotNull { it.toSearchResponse("series") } ?: emptyList()
+                        if (items.isNotEmpty()) lists.add(HomePageList("All Series (${parsed.total ?: items.size})", items, isHorizontalImages = false))
+                        val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
+                        hasNext = page < totalPages
+                    } else {
+                        if (page == 1) lists.add(HomePageList("Error loading Series. The API might be blocked or down.", emptyList(), isHorizontalImages = false))
+                    }
                 }
                 "smart" -> {
-                    // Only run the background crawler when the Smart Catalog tab is opened
                     syncAndCrawl()
                     val allRecords = HDGharTVStorage.getAll()
                     
                     if (allRecords.isEmpty()) {
-                        // Show a loading message if the crawler hasn't finished yet
-                        lists.add(HomePageList("Loading Catalog... Please wait or check 'All Movies' tab.", emptyList(), isHorizontalImages = false))
+                        lists.add(HomePageList("Smart Catalog is empty. Crawler failed to fetch data. Try again later.", emptyList(), isHorizontalImages = false))
                     } else {
                         val popMovies = allRecords.filter { it.type == "movie" }.sortedByDescending { it.voteAverage }.map { it.toSearchResponse() }
                         if (popMovies.isNotEmpty()) lists.add(HomePageList("🏆 Most Popular Movies (${popMovies.size})", popMovies, isHorizontalImages = false))
@@ -71,7 +74,9 @@ class HDGharSmartProvider : BaseHDGharProvider() {
                     hasNext = false
                 }
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            if (lists.isEmpty()) lists.add(HomePageList("Network Error: ${e.message}", emptyList(), isHorizontalImages = false))
+        }
         return newHomePageResponse(lists, hasNext = hasNext)
     }
 
