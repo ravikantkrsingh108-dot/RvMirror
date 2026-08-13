@@ -1,4 +1,4 @@
-package com.lagradost.hdghartv
+package com.laddu100.hdghartv
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
