@@ -27,7 +27,6 @@ open class BaseHDGharProvider : MainAPI() {
     protected val fallbackApiBase = "https://hdghartv.cc"
     protected val TAG = "HDGharBase"
     
-    // Added User-Agent to prevent server blocks
     protected val browserHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
         "Referer" to "https://hdghartv.cc/"
@@ -41,16 +40,12 @@ open class BaseHDGharProvider : MainAPI() {
     protected val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile protected var crawling = false
 
-    // API Data Classes (Prefixed to avoid collisions)
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiStreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
-    
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiEpisode(@JsonProperty("episodeNumber") val episodeNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("stillPath") val stillPath: String? = null, @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("streamingLinks") val streamingLinks: List<ApiStreamLink>? = null)
-    
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiSeason(@JsonProperty("seasonNumber") val seasonNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("posterPath") val posterPath: String? = null, @JsonProperty("episodes") val episodes: List<ApiEpisode>? = null)
-    
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiGenre(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCompany(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiSpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
@@ -103,20 +98,19 @@ open class BaseHDGharProvider : MainAPI() {
             try {
                 for (i in 1..2) {
                     val mRes = app.get("$base/api/movies/public?page=$i&limit=50", headers = browserHeaders, referer = "$base/").text
-                    val mParsed = parseJson<ApiMediaListResponse>(mRes)
-                    val mRecords = if (!mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
+                    val mParsed = tryParseJson<ApiMediaListResponse>(mRes)
+                    val mRecords = if (mParsed != null && !mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
                     if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
-                    if ((mParsed.data?.size ?: 0) < 50) break
+                    if ((mParsed?.data?.size ?: 0) < 50) break
                 }
                 for (i in 1..2) {
                     val sRes = app.get("$base/api/series/public?page=$i&limit=50", headers = browserHeaders, referer = "$base/").text
-                    val sParsed = parseJson<ApiMediaListResponse>(sRes)
-                    val sRecords = if (!sParsed.data.isNullOrEmpty()) sParsed.data.mapNotNull { item -> item.toLocalRecord("series") } else emptyList()
+                    val sParsed = tryParseJson<ApiMediaListResponse>(sRes)
+                    val sRecords = if (sParsed != null && !sParsed.data.isNullOrEmpty()) sParsed.data.mapNotNull { item -> item.toLocalRecord("series") } else emptyList()
                     if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
-                    if ((sParsed.data?.size ?: 0) < 50) break
+                    if ((sParsed?.data?.size ?: 0) < 50) break
                 }
                 allRecords = HDGharTVStorage.getAll()
-                delay(500) 
             } catch (e: Exception) { Log.e(TAG, "Sync Error: ${e.message}") }
         }
 
@@ -130,17 +124,17 @@ open class BaseHDGharProvider : MainAPI() {
                     val limit = 50
                     for (i in 1..2) {
                         val mRes = app.get("$base/api/movies/public?page=$moviePage&limit=$limit", headers = browserHeaders, referer = "$base/").text
-                        val mParsed = parseJson<ApiMediaListResponse>(mRes)
-                        val mRecords = if (!mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
+                        val mParsed = tryParseJson<ApiMediaListResponse>(mRes)
+                        val mRecords = if (mParsed != null && !mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
                         if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
-                        if ((mParsed.data?.size ?: 0) < limit) moviePage = 1 else moviePage++
+                        if ((mParsed?.data?.size ?: 0) < limit) moviePage = 1 else moviePage++
                     }
                     for (i in 1..2) {
                         val sRes = app.get("$base/api/series/public?page=$seriesPage&limit=$limit", headers = browserHeaders, referer = "$base/").text
-                        val sParsed = parseJson<ApiMediaListResponse>(sRes)
-                        val sRecords = if (!sParsed.data.isNullOrEmpty()) sParsed.data.mapNotNull { item -> item.toLocalRecord("series") } else emptyList()
+                        val sParsed = tryParseJson<ApiMediaListResponse>(sRes)
+                        val sRecords = if (sParsed != null && !sParsed.data.isNullOrEmpty()) sParsed.data.mapNotNull { item -> item.toLocalRecord("series") } else emptyList()
                         if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
-                        if ((sParsed.data?.size ?: 0) < limit) seriesPage = 1 else seriesPage++
+                        if ((sParsed?.data?.size ?: 0) < limit) seriesPage = 1 else seriesPage++
                     }
                     HDGharTVStorage.saveCrawlerState(moviePage, seriesPage)
                 } catch (e: Exception) { Log.e(TAG, "Crawler Error: ${e.message}") } finally { crawling = false }
@@ -170,60 +164,37 @@ open class BaseHDGharProvider : MainAPI() {
             }
 
             val tags = mutableListOf<String>()
-            if (!item.genres.isNullOrEmpty()) {
-                item.genres.forEach { g -> if (!g.name.isNullOrBlank()) tags.add(g.name) }
-            }
-            if (!item.spokenLanguages.isNullOrEmpty()) {
-                item.spokenLanguages.forEach { l -> val name = l.englishName ?: l.name; if (!name.isNullOrBlank()) tags.add(name) }
-            }
-            if (!item.categories.isNullOrEmpty()) {
-                item.categories.forEach { c -> tags.add(c) }
-            }
-            if (!item.networks.isNullOrEmpty()) {
-                item.networks.forEach { n -> if (!n.name.isNullOrBlank()) tags.add(n.name) }
-            }
-            if (!item.productionCompanies.isNullOrEmpty()) {
-                item.productionCompanies.forEach { p -> if (!p.name.isNullOrBlank()) tags.add(p.name) }
-            }
+            if (!item.genres.isNullOrEmpty()) item.genres.forEach { g -> if (!g.name.isNullOrBlank()) tags.add(g.name) }
+            if (!item.spokenLanguages.isNullOrEmpty()) item.spokenLanguages.forEach { l -> val name = l.englishName ?: l.name; if (!name.isNullOrBlank()) tags.add(name) }
+            if (!item.categories.isNullOrEmpty()) item.categories.forEach { c -> tags.add(c) }
+            if (!item.networks.isNullOrEmpty()) item.networks.forEach { n -> if (!n.name.isNullOrBlank()) tags.add(n.name) }
+            if (!item.productionCompanies.isNullOrEmpty()) item.productionCompanies.forEach { p -> if (!p.name.isNullOrBlank()) tags.add(p.name) }
 
             val actors = mutableListOf<ActorData>()
             if (!item.cast.isNullOrEmpty()) {
                 item.cast.forEach { c ->
                     val name = c.name
-                    if (!name.isNullOrBlank()) {
-                        actors.add(ActorData(Actor(name), roleString = c.character))
-                    }
+                    if (!name.isNullOrBlank()) actors.add(ActorData(Actor(name), roleString = c.character))
                 }
             }
             
-            val cert = if (!item.certifications.isNullOrEmpty()) {
-                item.certifications.firstOrNull { c -> !c.certification.isNullOrBlank() }?.certification
-            } else {
-                item.contentRating
-            }
+            val cert = if (!item.certifications.isNullOrEmpty()) item.certifications.firstOrNull { c -> !c.certification.isNullOrBlank() }?.certification else item.contentRating
 
             val extraInfo = StringBuilder()
             val collectionName = item.collection?.name
             if (!collectionName.isNullOrBlank()) extraInfo.append("🎞️ Collection: $collectionName\n")
-            
             val releaseDate = item.releaseDate
             if (!releaseDate.isNullOrBlank()) extraInfo.append("📅 Release Date: $releaseDate\n")
-            
             val firstAirDate = item.firstAirDate
             if (!firstAirDate.isNullOrBlank()) extraInfo.append("📅 First Air Date: $firstAirDate\n")
-            
             val originalLanguage = item.originalLanguage
             if (!originalLanguage.isNullOrBlank()) extraInfo.append("🗣️ Language: ${originalLanguage.replaceFirstChar { c -> c.uppercase() }}\n")
-            
             val voteCount = item.voteCount
             if (voteCount != null && voteCount > 0) extraInfo.append("🗳️ Vote Count: ${formatNumber(voteCount)}\n")
-            
             val viewCount = item.viewCount
             if (viewCount != null && viewCount > 0) extraInfo.append("👁️ Views: ${formatNumber(viewCount)}\n")
-            
             val popularity = item.popularity
             if (popularity != null && popularity > 0.0) extraInfo.append("📊 Popularity: ${"%.2f".format(popularity)}\n")
-            
             val status = item.status
             if (!status.isNullOrBlank()) extraInfo.append("📌 Status: $status\n")
             
@@ -231,9 +202,7 @@ open class BaseHDGharProvider : MainAPI() {
 
             var scoreVal: Score? = null
             val voteAvg = item.voteAverage
-            if (voteAvg != null) {
-                scoreVal = Score.from10(voteAvg.toString())
-            }
+            if (voteAvg != null) scoreVal = Score.from10(voteAvg.toString())
 
             if (loadData.type == "movie") {
                 newMovieLoadResponse(title, url, TvType.Movie, streams.toJson()) {
@@ -256,11 +225,7 @@ open class BaseHDGharProvider : MainAPI() {
                     for (ep in epsList) {
                         val epNum = ep.episodeNumber ?: continue
                         val rawStreams = ep.streamingLinks
-                        val epStreams: List<ApiStreamLink> = if (!rawStreams.isNullOrEmpty()) {
-                            rawStreams.filter { link -> link.isActive != false && !link.url.isNullOrBlank() }
-                        } else {
-                            emptyList()
-                        }
+                        val epStreams: List<ApiStreamLink> = if (!rawStreams.isNullOrEmpty()) rawStreams.filter { link -> link.isActive != false && !link.url.isNullOrBlank() } else emptyList()
                         episodes.add(newEpisode(epStreams.toJson()) {
                             this.name = ep.name ?: "Episode $epNum"
                             this.season = seasonNum
