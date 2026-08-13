@@ -1,4 +1,4 @@
-package com.laddu100.hdghartv
+package com.lagradost.hdghartv
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -48,7 +48,6 @@ open class BaseHDGharProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiGenre(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCompany(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiSpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
-    @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCollection(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCastMember(@JsonProperty("name") val name: String? = null, @JsonProperty("character") val character: String? = null, @JsonProperty("profilePath") val profilePath: String? = null)
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -58,7 +57,9 @@ open class BaseHDGharProvider : MainAPI() {
         @JsonProperty("releaseDate") val releaseDate: String? = null, @JsonProperty("firstAirDate") val firstAirDate: String? = null,
         @JsonProperty("genres") val genres: List<ApiGenre>? = null, @JsonProperty("categories") val categories: List<String>? = null,
         @JsonProperty("networks") val networks: List<ApiCompany>? = null, @JsonProperty("productionCompanies") val productionCompanies: List<ApiCompany>? = null,
-        @JsonProperty("belongs_to_collection") val collection: ApiCollection? = null, @JsonProperty("originalLanguage") val originalLanguage: String? = null,
+        // FIXED: Changed from "belongs_to_collection" to "Collection" to match the exact API response
+        @JsonProperty("Collection") val collection: ApiCollection? = null, 
+        @JsonProperty("originalLanguage") val originalLanguage: String? = null,
         @JsonProperty("spokenLanguages") val spokenLanguages: List<ApiSpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
         @JsonProperty("voteCount") val voteCount: Int? = null, @JsonProperty("viewCount") val viewCount: Int? = null, @JsonProperty("popularity") val popularity: Double? = null,
         @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("status") val status: String? = null,
