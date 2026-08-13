@@ -27,9 +27,12 @@ open class BaseHDGharProvider : MainAPI() {
     protected val fallbackApiBase = "https://hdghartv.cc"
     protected val TAG = "HDGharBase"
     
+    // Added Accept and Origin to bypass server blocks
     protected val browserHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
-        "Referer" to "https://hdghartv.cc/"
+        "Referer" to "https://hdghartv.cc/",
+        "Accept" to "application/json, text/plain, */*",
+        "Origin" to "https://hdghartv.cc"
     )
 
     protected suspend fun apiBase(): String {
@@ -40,12 +43,16 @@ open class BaseHDGharProvider : MainAPI() {
     protected val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile protected var crawling = false
 
+    // API Data Classes (Prefixed to avoid collisions)
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiStreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
+    
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiEpisode(@JsonProperty("episodeNumber") val episodeNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("stillPath") val stillPath: String? = null, @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("streamingLinks") val streamingLinks: List<ApiStreamLink>? = null)
+    
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiSeason(@JsonProperty("seasonNumber") val seasonNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("posterPath") val posterPath: String? = null, @JsonProperty("episodes") val episodes: List<ApiEpisode>? = null)
+    
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiGenre(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCompany(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiSpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
