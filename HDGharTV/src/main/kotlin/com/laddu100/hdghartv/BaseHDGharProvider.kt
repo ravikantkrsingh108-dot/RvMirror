@@ -57,7 +57,6 @@ open class BaseHDGharProvider : MainAPI() {
         @JsonProperty("releaseDate") val releaseDate: String? = null, @JsonProperty("firstAirDate") val firstAirDate: String? = null,
         @JsonProperty("genres") val genres: List<ApiGenre>? = null, @JsonProperty("categories") val categories: List<String>? = null,
         @JsonProperty("networks") val networks: List<ApiCompany>? = null, @JsonProperty("productionCompanies") val productionCompanies: List<ApiCompany>? = null,
-        // Changed to Any? to handle both Object and String responses from the API
         @JsonProperty("collection") val collection: Any? = null, 
         @JsonProperty("originalLanguage") val originalLanguage: String? = null,
         @JsonProperty("spokenLanguages") val spokenLanguages: List<ApiSpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
