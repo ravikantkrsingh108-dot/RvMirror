@@ -34,7 +34,7 @@ open class BaseHDGharProvider : MainAPI() {
     protected val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile protected var crawling = false
 
-    // API Data Classes (Prefixed with 'Api' to avoid collisions with CloudStream classes)
+    // API Data Classes (Prefixed to avoid collisions)
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiStreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
     
@@ -191,10 +191,12 @@ open class BaseHDGharProvider : MainAPI() {
                 }
             } else {
                 val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
-                item.seasons?.forEach { season ->
-                    val seasonNum = season.seasonNumber ?: return@forEach
-                    season.episodes?.forEach { ep ->
-                        val epNum = ep.episodeNumber ?: return@forEach
+                val seasonsList = item.seasons ?: emptyList()
+                for (season in seasonsList) {
+                    val seasonNum = season.seasonNumber ?: continue
+                    val epsList = season.episodes ?: emptyList()
+                    for (ep in epsList) {
+                        val epNum = ep.episodeNumber ?: continue
                         val epStreams = ep.streamingLinks?.filter { it.isActive != false && !it.url.isNullOrBlank() } ?: emptyList()
                         episodes.add(newEpisode(epStreams.toJson()) {
                             this.name = ep.name ?: "Episode $epNum"
