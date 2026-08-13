@@ -97,20 +97,30 @@ open class BaseHDGharProvider : MainAPI() {
         }.firstOrNull { it.isNotBlank() } ?: ""
     }
 
-    // Helper to extract collection name from Any? type
-    private fun extractCollectionName(c: Any?): String {
+    // Helper to extract ALL collection names from Any? type
+    private fun extractCollectionNames(c: Any?): List<String> {
         return when (c) {
-            is String -> c
-            is Map<*, *> -> c["name"]?.toString()
-            else -> null
-        } ?: ""
+            is String -> if (c.isNotBlank()) listOf(c) else emptyList()
+            is Map<*, *> -> {
+                val name = c["name"]?.toString()
+                if (!name.isNullOrBlank()) listOf(name) else emptyList()
+            }
+            is List<*> -> c.mapNotNull {
+                when (it) {
+                    is String -> it
+                    is Map<*, *> -> it["name"]?.toString()
+                    else -> null
+                }
+            }.filter { it.isNotBlank() }
+            else -> emptyList()
+        }
     }
 
     protected fun ApiMediaItem.toLocalRecord(type: String): HDGharTVStorage.MediaRecord? {
         val recordId = id ?: return null
         val recordTitle = title ?: originalTitle ?: return null
         val cert = extractCertification(certifications).ifBlank { contentRating ?: "" }
-        val colName = extractCollectionName(collection)
+        val colNames = extractCollectionNames(collection)
         
         return HDGharTVStorage.MediaRecord(
             id = recordId, type = type, title = recordTitle, overview = overview ?: "", posterPath = posterPath ?: "",
@@ -119,7 +129,7 @@ open class BaseHDGharProvider : MainAPI() {
             categories = categories ?: emptyList(),
             networks = if (!networks.isNullOrEmpty()) networks.mapNotNull { n -> n.name } else emptyList(),
             studios = if (!productionCompanies.isNullOrEmpty()) productionCompanies.mapNotNull { p -> p.name } else emptyList(),
-            collection = colName, originalLanguage = originalLanguage ?: "",
+            collection = colNames, originalLanguage = originalLanguage ?: "",
             spokenLanguages = if (!spokenLanguages.isNullOrEmpty()) spokenLanguages.mapNotNull { l -> l.englishName ?: l.name } else emptyList(),
             voteAverage = voteAverage ?: 0.0, viewCount = voteCount ?: viewCount ?: 0, popularity = popularity ?: 0.0,
             runtime = runtime ?: 0, status = status ?: "", certification = cert,
@@ -222,10 +232,10 @@ open class BaseHDGharProvider : MainAPI() {
             }
             
             val cert = extractCertification(item.certifications).ifBlank { item.contentRating }
-            val collectionName = extractCollectionName(item.collection)
+            val collectionNames = extractCollectionNames(item.collection)
 
             val extraInfo = StringBuilder()
-            if (collectionName.isNotBlank()) extraInfo.append("🎞️ Collection: $collectionName\n")
+            if (collectionNames.isNotEmpty()) extraInfo.append("🎞️ Collection: ${collectionNames.joinToString(", ")}\n")
             val releaseDate = item.releaseDate
             if (!releaseDate.isNullOrBlank()) extraInfo.append("📅 Release Date: $releaseDate\n")
             val firstAirDate = item.firstAirDate
