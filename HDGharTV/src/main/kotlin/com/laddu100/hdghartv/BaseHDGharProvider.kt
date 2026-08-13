@@ -35,16 +35,12 @@ open class BaseHDGharProvider : MainAPI() {
     protected val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile protected var crawling = false
 
-    // API Data Classes
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiStreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
-    
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiEpisode(@JsonProperty("episodeNumber") val episodeNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("stillPath") val stillPath: String? = null, @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("streamingLinks") val streamingLinks: List<ApiStreamLink>? = null)
-    
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiSeason(@JsonProperty("seasonNumber") val seasonNumber: Int? = null, @JsonProperty("name") val name: String? = null, @JsonProperty("overview") val overview: String? = null, @JsonProperty("posterPath") val posterPath: String? = null, @JsonProperty("episodes") val episodes: List<ApiEpisode>? = null)
-    
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiGenre(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiCompany(@JsonProperty("name") val name: String? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiSpokenLanguage(@JsonProperty("englishName") val englishName: String? = null, @JsonProperty("name") val name: String? = null)
@@ -71,46 +67,23 @@ open class BaseHDGharProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiMediaListResponse(@JsonProperty("data") val data: List<ApiMediaItem>? = null, @JsonProperty("totalPages") val totalPages: Int? = null, @JsonProperty("total") val total: Int? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class LoadData(val id: String, val type: String, val title: String, val posterUrl: String? = null)
 
-    // Helper to extract certification prioritizing US and IN
     private fun extractCertification(certs: List<Any>?): String {
         if (certs.isNullOrEmpty()) return ""
         for (c in certs) {
-            val str = when (c) {
-                is String -> c
-                is Map<*, *> -> c["certification"]?.toString()
-                else -> null
-            }
+            val str = when (c) { is String -> c; is Map<*, *> -> c["certification"]?.toString(); else -> null }
             if (str != null) {
                 val parts = str.split(" ")
-                if (parts.size == 2 && (parts[0].equals("US", true) || parts[0].equals("IN", true))) {
-                    return parts[1]
-                }
+                if (parts.size == 2 && (parts[0].equals("US", true) || parts[0].equals("IN", true))) return parts[1]
             }
         }
-        return certs.mapNotNull { c ->
-            when (c) {
-                is String -> c
-                is Map<*, *> -> c["certification"]?.toString()
-                else -> null
-            }
-        }.firstOrNull { it.isNotBlank() } ?: ""
+        return certs.mapNotNull { c -> when (c) { is String -> c; is Map<*, *> -> c["certification"]?.toString(); else -> null } }.firstOrNull { it.isNotBlank() } ?: ""
     }
 
-    // Helper to extract ALL collection names from Any? type
     private fun extractCollectionNames(c: Any?): List<String> {
         return when (c) {
             is String -> if (c.isNotBlank()) listOf(c) else emptyList()
-            is Map<*, *> -> {
-                val name = c["name"]?.toString()
-                if (!name.isNullOrBlank()) listOf(name) else emptyList()
-            }
-            is List<*> -> c.mapNotNull {
-                when (it) {
-                    is String -> it
-                    is Map<*, *> -> it["name"]?.toString()
-                    else -> null
-                }
-            }.filter { it.isNotBlank() }
+            is Map<*, *> -> { val name = c["name"]?.toString(); if (!name.isNullOrBlank()) listOf(name) else emptyList() }
+            is List<*> -> c.mapNotNull { when (it) { is String -> it; is Map<*, *> -> it["name"]?.toString(); else -> null } }.filter { it.isNotBlank() }
             else -> emptyList()
         }
     }
@@ -120,7 +93,6 @@ open class BaseHDGharProvider : MainAPI() {
         val recordTitle = title ?: originalTitle ?: return null
         val cert = extractCertification(certifications).ifBlank { contentRating ?: "" }
         val colNames = extractCollectionNames(collection)
-        
         return HDGharTVStorage.MediaRecord(
             id = recordId, type = type, title = recordTitle, overview = overview ?: "", posterPath = posterPath ?: "",
             backdropPath = backdropPath ?: "", releaseDate = releaseDate ?: "", firstAirDate = firstAirDate ?: "",
@@ -158,7 +130,6 @@ open class BaseHDGharProvider : MainAPI() {
                 allRecords = HDGharTVStorage.getAll()
             } catch (e: Exception) { Log.e(TAG, "Sync Error: ${e.message}") }
         }
-
         if (!crawling) {
             crawling = true
             crawlerScope.launch {
@@ -198,41 +169,22 @@ open class BaseHDGharProvider : MainAPI() {
         return try {
             val endpoint = if (loadData.type == "movie") "movies" else "series"
             val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
-            
             val item = tryParseJson<ApiMediaItem>(res.text) ?: return null
-            
-            // Save the rich detail data (like Collection) to local storage when opened
             val localRecord = item.toLocalRecord(loadData.type)
-            if (localRecord != null) {
-                HDGharTVStorage.addRich(localRecord)
-            }
+            if (localRecord != null) HDGharTVStorage.addRich(localRecord)
             
             val title = item.title ?: item.originalTitle ?: loadData.title
-            
-            val streams = if (!item.streamingLinks.isNullOrEmpty()) {
-                item.streamingLinks.filter { link -> link.isActive != false && !link.url.isNullOrBlank() }
-            } else {
-                emptyList()
-            }
-
+            val streams = if (!item.streamingLinks.isNullOrEmpty()) item.streamingLinks.filter { link -> link.isActive != false && !link.url.isNullOrBlank() } else emptyList()
             val tags = mutableListOf<String>()
             if (!item.genres.isNullOrEmpty()) item.genres.forEach { g -> if (!g.name.isNullOrBlank()) tags.add(g.name) }
             if (!item.spokenLanguages.isNullOrEmpty()) item.spokenLanguages.forEach { l -> val name = l.englishName ?: l.name; if (!name.isNullOrBlank()) tags.add(name) }
             if (!item.categories.isNullOrEmpty()) item.categories.forEach { c -> tags.add(c) }
             if (!item.networks.isNullOrEmpty()) item.networks.forEach { n -> if (!n.name.isNullOrBlank()) tags.add(n.name) }
             if (!item.productionCompanies.isNullOrEmpty()) item.productionCompanies.forEach { p -> if (!p.name.isNullOrBlank()) tags.add(p.name) }
-
             val actors = mutableListOf<ActorData>()
-            if (!item.cast.isNullOrEmpty()) {
-                item.cast.forEach { c ->
-                    val name = c.name
-                    if (!name.isNullOrBlank()) actors.add(ActorData(Actor(name), roleString = c.character))
-                }
-            }
-            
+            if (!item.cast.isNullOrEmpty()) item.cast.forEach { c -> val name = c.name; if (!name.isNullOrBlank()) actors.add(ActorData(Actor(name), roleString = c.character)) }
             val cert = extractCertification(item.certifications).ifBlank { item.contentRating }
             val collectionNames = extractCollectionNames(item.collection)
-
             val extraInfo = StringBuilder()
             if (collectionNames.isNotEmpty()) extraInfo.append("🎞️ Collection: ${collectionNames.joinToString(", ")}\n")
             val releaseDate = item.releaseDate
@@ -249,9 +201,7 @@ open class BaseHDGharProvider : MainAPI() {
             if (popularity != null && popularity > 0.0) extraInfo.append("📊 Popularity: ${"%.2f".format(popularity)}\n")
             val status = item.status
             if (!status.isNullOrBlank()) extraInfo.append("📌 Status: $status\n")
-            
             val finalPlot = if (extraInfo.isNotEmpty()) "${item.overview?.trim()}\n\n--- Info ---\n$extraInfo".trim() else item.overview?.trim()
-
             var scoreVal: Score? = null
             val voteAvg = item.voteAverage
             if (voteAvg != null) scoreVal = Score.from10(voteAvg.toString())
