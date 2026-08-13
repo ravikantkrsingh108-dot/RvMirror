@@ -12,10 +12,9 @@ object HDGharTVStorage {
         this.prefs = context.getSharedPreferences("HDGharTVPrefs", Context.MODE_PRIVATE)
     }
 
-    // Stores complete media info locally
     data class MediaRecord(
         val id: String,
-        val type: String, // "movie" or "series"
+        val type: String,
         val title: String,
         val overview: String = "",
         val posterPath: String = "",
@@ -36,7 +35,7 @@ object HDGharTVStorage {
         val status: String = "",
         val certification: String = "",
         val cast: List<CastMember> = emptyList(),
-        val ts: Long = System.currentTimeMillis() 
+        val ts: Long = System.currentTimeMillis()
     )
 
     data class CastMember(
@@ -93,7 +92,6 @@ object HDGharTVStorage {
         return cache.values.toList()
     }
 
-    // Crawler state persistence (remembers which page it left off at)
     fun getCrawlerState(): Pair<Int, Int> {
         val mPage = if (::prefs.isInitialized) prefs.getInt("crawler_movie_page", 1) else 1
         val sPage = if (::prefs.isInitialized) prefs.getInt("crawler_series_page", 1) else 1
@@ -106,7 +104,6 @@ object HDGharTVStorage {
     }
 }
 
-// Top-level extension functions
 fun HDGharTVStorage.MediaRecord.getRegion(): String {
     if (categories.isNotEmpty()) return categories.first()
     val langs = spokenLanguages.joinToString(",").lowercase()
