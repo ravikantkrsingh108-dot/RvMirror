@@ -26,14 +26,6 @@ open class BaseHDGharProvider : MainAPI() {
 
     protected val fallbackApiBase = "https://hdghartv.cc"
     protected val TAG = "HDGharBase"
-    
-    // Added Accept and Origin to bypass server blocks
-    protected val browserHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
-        "Referer" to "https://hdghartv.cc/",
-        "Accept" to "application/json, text/plain, */*",
-        "Origin" to "https://hdghartv.cc"
-    )
 
     protected suspend fun apiBase(): String {
         val domain = FirebaseDomainHelper.getDomain("hdghartv")
@@ -104,14 +96,15 @@ open class BaseHDGharProvider : MainAPI() {
         if (allRecords.isEmpty()) {
             try {
                 for (i in 1..2) {
-                    val mRes = app.get("$base/api/movies/public?page=$i&limit=50", headers = browserHeaders, referer = "$base/").text
+                    // Removed browserHeaders
+                    val mRes = app.get("$base/api/movies/public?page=$i&limit=50", referer = "$base/").text
                     val mParsed = tryParseJson<ApiMediaListResponse>(mRes)
                     val mRecords = if (mParsed != null && !mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
                     if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
                     if ((mParsed?.data?.size ?: 0) < 50) break
                 }
                 for (i in 1..2) {
-                    val sRes = app.get("$base/api/series/public?page=$i&limit=50", headers = browserHeaders, referer = "$base/").text
+                    val sRes = app.get("$base/api/series/public?page=$i&limit=50", referer = "$base/").text
                     val sParsed = tryParseJson<ApiMediaListResponse>(sRes)
                     val sRecords = if (sParsed != null && !sParsed.data.isNullOrEmpty()) sParsed.data.mapNotNull { item -> item.toLocalRecord("series") } else emptyList()
                     if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
@@ -130,14 +123,14 @@ open class BaseHDGharProvider : MainAPI() {
                     if (seriesPage == 1 && allRecords.isNotEmpty()) seriesPage = 3
                     val limit = 50
                     for (i in 1..2) {
-                        val mRes = app.get("$base/api/movies/public?page=$moviePage&limit=$limit", headers = browserHeaders, referer = "$base/").text
+                        val mRes = app.get("$base/api/movies/public?page=$moviePage&limit=$limit", referer = "$base/").text
                         val mParsed = tryParseJson<ApiMediaListResponse>(mRes)
                         val mRecords = if (mParsed != null && !mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
                         if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
                         if ((mParsed?.data?.size ?: 0) < limit) moviePage = 1 else moviePage++
                     }
                     for (i in 1..2) {
-                        val sRes = app.get("$base/api/series/public?page=$seriesPage&limit=$limit", headers = browserHeaders, referer = "$base/").text
+                        val sRes = app.get("$base/api/series/public?page=$seriesPage&limit=$limit", referer = "$base/").text
                         val sParsed = tryParseJson<ApiMediaListResponse>(sRes)
                         val sRecords = if (sParsed != null && !sParsed.data.isNullOrEmpty()) sParsed.data.mapNotNull { item -> item.toLocalRecord("series") } else emptyList()
                         if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
@@ -159,7 +152,8 @@ open class BaseHDGharProvider : MainAPI() {
         val base = apiBase()
         return try {
             val endpoint = if (loadData.type == "movie") "movies" else "series"
-            val res = app.get("$base/api/$endpoint/public/${loadData.id}", headers = browserHeaders, referer = "$base/")
+            // Removed browserHeaders
+            val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
             
             val item = tryParseJson<ApiMediaItem>(res.text) ?: return null
             val title = item.title ?: item.originalTitle ?: loadData.title
