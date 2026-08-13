@@ -17,7 +17,6 @@ class HDGharSmartProvider : BaseHDGharProvider() {
         try {
             when (request.data) {
                 "movies" -> {
-                    // Removed browserHeaders to prevent WAF block
                     val res = app.get("$base/api/movies/public?page=$page&limit=$limit", referer = "$base/")
                     val parsed = parseJson<ApiMediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
