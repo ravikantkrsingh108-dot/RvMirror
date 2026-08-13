@@ -62,7 +62,6 @@ open class BaseHDGharProvider : MainAPI() {
         @JsonProperty("spokenLanguages") val spokenLanguages: List<ApiSpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
         @JsonProperty("voteCount") val voteCount: Int? = null, @JsonProperty("viewCount") val viewCount: Int? = null, @JsonProperty("popularity") val popularity: Double? = null,
         @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("status") val status: String? = null,
-        // Changed to List<Any> to handle inconsistent API responses (Strings vs Objects)
         @JsonProperty("certifications") val certifications: List<Any>? = null, 
         @JsonProperty("contentRating") val contentRating: String? = null,
         @JsonProperty("cast") val cast: List<ApiCastMember>? = null, @JsonProperty("streamingLinks") val streamingLinks: List<ApiStreamLink>? = null,
@@ -72,9 +71,24 @@ open class BaseHDGharProvider : MainAPI() {
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiMediaListResponse(@JsonProperty("data") val data: List<ApiMediaItem>? = null, @JsonProperty("totalPages") val totalPages: Int? = null, @JsonProperty("total") val total: Int? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class LoadData(val id: String, val type: String, val title: String, val posterUrl: String? = null)
 
-    // Helper to extract certification from mixed list types
+    // Helper to extract certification prioritizing US and IN
     private fun extractCertification(certs: List<Any>?): String {
         if (certs.isNullOrEmpty()) return ""
+        
+        // First pass: Look specifically for US and IN
+        for (c in certs) {
+            when (c) {
+                is Map<*, *> -> {
+                    val country = c["iso_3166_1"]?.toString()
+                    val cert = c["certification"]?.toString()
+                    if (!cert.isNullOrBlank() && (country == "US" || country == "IN")) {
+                        return cert
+                    }
+                }
+            }
+        }
+        
+        // Fallback: If US/IN not found, return the first available certification
         return certs.mapNotNull { c ->
             when (c) {
                 is String -> c
@@ -167,6 +181,13 @@ open class BaseHDGharProvider : MainAPI() {
             val res = app.get("$base/api/$endpoint/public/${loadData.id}", referer = "$base/")
             
             val item = tryParseJson<ApiMediaItem>(res.text) ?: return null
+            
+            // Save the rich detail data (like Collection) to local storage when opened
+            val localRecord = item.toLocalRecord(loadData.type)
+            if (localRecord != null) {
+                HDGharTVStorage.addRich(localRecord)
+            }
+            
             val title = item.title ?: item.originalTitle ?: loadData.title
             
             val streams = if (!item.streamingLinks.isNullOrEmpty()) {
