@@ -8,10 +8,7 @@ class HDGharSmartProvider : BaseHDGharProvider() {
     override var name = "HDGhar Smart"
     override val mainPage = mainPageOf("movies" to "All Movies", "series" to "All Series", "smart" to "Smart Catalog")
 
-    private val browserHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
-        "Referer" to "https://hdghartv.cc/"
-    )
+    // Removed duplicate browserHeaders, it is inherited from BaseHDGharProvider
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val lists = mutableListOf<HomePageList>()
