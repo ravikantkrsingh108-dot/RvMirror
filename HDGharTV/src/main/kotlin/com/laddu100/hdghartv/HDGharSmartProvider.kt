@@ -19,7 +19,7 @@ class HDGharSmartProvider : BaseHDGharProvider() {
             when (request.data) {
                 "movies" -> {
                     val res = app.get("$base/api/movies/public?page=$page&limit=$limit", referer = "$base/")
-                    val parsed = parseJson<MediaListResponse>(res.text)
+                    val parsed = parseJson<ApiMediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("movie") } ?: emptyList()
                     if (items.isNotEmpty()) lists.add(HomePageList("All Movies (${parsed.total ?: items.size})", items, isHorizontalImages = false))
                     val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
@@ -27,7 +27,7 @@ class HDGharSmartProvider : BaseHDGharProvider() {
                 }
                 "series" -> {
                     val res = app.get("$base/api/series/public?page=$page&limit=$limit", referer = "$base/")
-                    val parsed = parseJson<MediaListResponse>(res.text)
+                    val parsed = parseJson<ApiMediaListResponse>(res.text)
                     val items = parsed.data?.mapNotNull { it.toSearchResponse("series") } ?: emptyList()
                     if (items.isNotEmpty()) lists.add(HomePageList("All Series (${parsed.total ?: items.size})", items, isHorizontalImages = false))
                     val totalPages = parsed.totalPages ?: if (parsed.total != null) (parsed.total + limit - 1) / limit else 1
@@ -66,7 +66,7 @@ class HDGharSmartProvider : BaseHDGharProvider() {
         return newHomePageResponse(lists, hasNext = hasNext)
     }
 
-    private fun MediaItem.toSearchResponse(type: String): SearchResponse? {
+    private fun ApiMediaItem.toSearchResponse(type: String): SearchResponse? {
         val id = id ?: return null
         val title = title ?: originalTitle ?: return null
         val loadData = LoadData(id = id, type = type, title = title, posterUrl = posterPath)
