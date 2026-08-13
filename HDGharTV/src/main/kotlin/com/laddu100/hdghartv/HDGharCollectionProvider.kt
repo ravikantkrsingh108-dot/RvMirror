@@ -12,9 +12,14 @@ class HDGharCollectionProvider : BaseHDGharProvider() {
         val allRecords = HDGharTVStorage.getAll()
         
         val collections = allRecords.filter { it.collection.isNotBlank() }.groupBy { it.collection }
-        collections.entries.sortedByDescending { it.value.size }.forEach { (col, items) ->
-            val mapped = items.map { it.toSearchResponse() }
-            if (mapped.size >= 2) lists.add(HomePageList("🎞️ $col (${mapped.size})", mapped, isHorizontalImages = false))
+        if (collections.isEmpty()) {
+            lists.add(HomePageList("No collections found yet.", emptyList(), isHorizontalImages = false))
+            lists.add(HomePageList("Open a few movies in 'HDGhar Smart' to populate this catalog.", emptyList(), isHorizontalImages = false))
+        } else {
+            collections.entries.sortedByDescending { it.value.size }.forEach { (col, items) ->
+                val mapped = items.map { it.toSearchResponse() }
+                if (mapped.size >= 2) lists.add(HomePageList("🎞️ $col (${mapped.size})", mapped, isHorizontalImages = false))
+            }
         }
         return newHomePageResponse(lists, hasNext = false)
     }
