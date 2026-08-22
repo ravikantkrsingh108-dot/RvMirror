@@ -13,9 +13,12 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 open class BaseHDGharProvider : MainAPI() {
     override var mainUrl = "https://hdghartv.cc"
@@ -32,8 +35,19 @@ open class BaseHDGharProvider : MainAPI() {
         return (domain ?: fallbackApiBase).removeSuffix("/")
     }
 
-    protected val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    @Volatile protected var crawling = false
+    companion object {
+        // FIX: shared by ALL provider subclasses (Smart / Collections / Networks / Year / Cast),
+        // so only ONE initial sync and ONE background crawler ever run at a time.
+        private val crawlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        private val crawling = AtomicBoolean(false)
+        private val initialSyncLock = Any()
+        private var initialSyncJob: Job? = null
+
+        private const val SYNC_AWAIT_TIMEOUT_MS = 15_000L
+        private const val PAGE_LIMIT = 50
+    }
+
+    // ===================== API models =====================
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     data class ApiStreamLink(@JsonProperty("quality") val quality: String? = null, @JsonProperty("url") val url: String? = null, @JsonProperty("type") val type: String? = null, @JsonProperty("language") val language: String? = null, @JsonProperty("isActive") val isActive: Boolean? = null, @JsonProperty("headers") val headers: String? = null, @JsonProperty("userAgent") val userAgent: String? = null)
@@ -53,12 +67,12 @@ open class BaseHDGharProvider : MainAPI() {
         @JsonProperty("releaseDate") val releaseDate: String? = null, @JsonProperty("firstAirDate") val firstAirDate: String? = null,
         @JsonProperty("genres") val genres: List<ApiGenre>? = null, @JsonProperty("categories") val categories: List<String>? = null,
         @JsonProperty("networks") val networks: List<ApiCompany>? = null, @JsonProperty("productionCompanies") val productionCompanies: List<ApiCompany>? = null,
-        @JsonProperty("collection") val collection: Any? = null, 
+        @JsonProperty("collection") val collection: Any? = null,
         @JsonProperty("originalLanguage") val originalLanguage: String? = null,
         @JsonProperty("spokenLanguages") val spokenLanguages: List<ApiSpokenLanguage>? = null, @JsonProperty("voteAverage") val voteAverage: Double? = null,
         @JsonProperty("voteCount") val voteCount: Int? = null, @JsonProperty("viewCount") val viewCount: Int? = null, @JsonProperty("popularity") val popularity: Double? = null,
         @JsonProperty("runtime") val runtime: Int? = null, @JsonProperty("status") val status: String? = null,
-        @JsonProperty("certifications") val certifications: List<Any>? = null, 
+        @JsonProperty("certifications") val certifications: List<Any>? = null,
         @JsonProperty("contentRating") val contentRating: String? = null,
         @JsonProperty("cast") val cast: List<ApiCastMember>? = null, @JsonProperty("streamingLinks") val streamingLinks: List<ApiStreamLink>? = null,
         @JsonProperty("seasons") val seasons: List<ApiSeason>? = null
@@ -66,6 +80,8 @@ open class BaseHDGharProvider : MainAPI() {
 
     @JsonIgnoreProperties(ignoreUnknown = true) data class ApiMediaListResponse(@JsonProperty("data") val data: List<ApiMediaItem>? = null, @JsonProperty("totalPages") val totalPages: Int? = null, @JsonProperty("total") val total: Int? = null)
     @JsonIgnoreProperties(ignoreUnknown = true) data class LoadData(val id: String, val type: String, val title: String, val posterUrl: String? = null)
+
+    // ===================== Mapping helpers =====================
 
     private fun extractCertification(certs: List<Any>?): String {
         if (certs.isNullOrEmpty()) return ""
@@ -102,59 +118,158 @@ open class BaseHDGharProvider : MainAPI() {
             studios = if (!productionCompanies.isNullOrEmpty()) productionCompanies.mapNotNull { p -> p.name } else emptyList(),
             collection = colNames, originalLanguage = originalLanguage ?: "",
             spokenLanguages = if (!spokenLanguages.isNullOrEmpty()) spokenLanguages.mapNotNull { l -> l.englishName ?: l.name } else emptyList(),
-            voteAverage = voteAverage ?: 0.0, viewCount = voteCount ?: viewCount ?: 0, popularity = popularity ?: 0.0,
+            // FIX: votes and views are stored separately now (viewCount used to fall back to voteCount,
+            // which made the "Most Viewed" section actually show "Most Voted").
+            voteAverage = voteAverage ?: 0.0,
+            voteCount = voteCount ?: 0,
+            viewCount = viewCount ?: 0,
+            popularity = popularity ?: 0.0,
             runtime = runtime ?: 0, status = status ?: "", certification = cert,
             cast = if (!cast.isNullOrEmpty()) cast.mapNotNull { c -> val name = c.name ?: return@mapNotNull null; HDGharTVStorage.CastMember(name, c.character ?: "", c.profilePath) } else emptyList()
         )
     }
 
-    protected suspend fun syncAndCrawl() {
+    // ===================== Catalog sync & background crawler =====================
+
+    /**
+     * Makes sure the catalog is seeded and rotates the background crawler forward.
+     *
+     * @param awaitInitialSync when true (default), waits up to [SYNC_AWAIT_TIMEOUT_MS] for the
+     *        first-ever sync to finish so data-dependent callers (main pages) get results.
+     *        Pass false to fire-and-forget (used by the Smart home page so it stays responsive).
+     */
+    protected suspend fun syncAndCrawl(awaitInitialSync: Boolean = true) {
         val base = apiBase()
-        var allRecords = HDGharTVStorage.getAll()
-        if (allRecords.isEmpty()) {
-            try {
-                for (i in 1..2) {
-                    val mRes = app.get("$base/api/movies/public?page=$i&limit=50", referer = "$base/").text
-                    val mParsed = tryParseJson<ApiMediaListResponse>(mRes)
-                    val mRecords = if (mParsed != null && !mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
-                    if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
-                    if ((mParsed?.data?.size ?: 0) < 50) break
-                }
-                for (i in 1..2) {
-                    val sRes = app.get("$base/api/series/public?page=$i&limit=50", referer = "$base/").text
-                    val sParsed = tryParseJson<ApiMediaListResponse>(sRes)
-                    val sRecords = if (sParsed != null && !sParsed.data.isNullOrEmpty()) sParsed.data.mapNotNull { item -> item.toLocalRecord("series") } else emptyList()
-                    if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
-                    if ((sParsed?.data?.size ?: 0) < 50) break
-                }
-                allRecords = HDGharTVStorage.getAll()
-            } catch (e: Exception) { Log.e(TAG, "Sync Error: ${e.message}") }
+        val pending = startInitialSyncIfNeeded(base)
+        when {
+            pending == null -> maybeStartCrawler(base) // already seeded → advance the crawl
+            awaitInitialSync -> withTimeoutOrNull(SYNC_AWAIT_TIMEOUT_MS) { pending.join() }
+            // else: initial sync runs in the background; the crawler is chained inside it
         }
-        if (!crawling) {
-            crawling = true
-            crawlerScope.launch {
+    }
+
+    /**
+     * Lighter variant for search(): guarantees the catalog is seeded (waiting once, bounded)
+     * but never triggers an extra crawl step.
+     */
+    protected suspend fun ensureCatalogReady() {
+        val base = apiBase()
+        val job = startInitialSyncIfNeeded(base)
+        if (job != null) withTimeoutOrNull(SYNC_AWAIT_TIMEOUT_MS) { job.join() }
+    }
+
+    /** Starts the one-time seed sync if needed. Returns the job to await, or null if already seeded. */
+    private fun startInitialSyncIfNeeded(base: String): Job? {
+        synchronized(initialSyncLock) {
+            if (HDGharTVStorage.isInitialSyncDone()) return null
+            val existing = initialSyncJob
+            if (existing != null && existing.isActive) return existing
+            val job = crawlerScope.launch {
                 try {
-                    var (moviePage, seriesPage) = HDGharTVStorage.getCrawlerState()
-                    if (moviePage == 1 && allRecords.isNotEmpty()) moviePage = 3
-                    if (seriesPage == 1 && allRecords.isNotEmpty()) seriesPage = 3
-                    val limit = 50
-                    for (i in 1..2) {
-                        val mRes = app.get("$base/api/movies/public?page=$moviePage&limit=$limit", referer = "$base/").text
-                        val mParsed = tryParseJson<ApiMediaListResponse>(mRes)
-                        val mRecords = if (mParsed != null && !mParsed.data.isNullOrEmpty()) mParsed.data.mapNotNull { item -> item.toLocalRecord("movie") } else emptyList()
-                        if (mRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(mRecords)
-                        if ((mParsed?.data?.size ?: 0) < limit) moviePage = 1 else moviePage++
-                    }
-                    for (i in 1..2) {
-                        val sRes = app.get("$base/api/series/public?page=$seriesPage&limit=$limit", referer = "$base/").text
-                        val sParsed = tryParseJson<ApiMediaListResponse>(sRes)
-                        val sRecords = if (sParsed != null && !sParsed.data.isNullOrEmpty()) sParsed.data.mapNotNull { item -> item.toLocalRecord("series") } else emptyList()
-                        if (sRecords.isNotEmpty()) HDGharTVStorage.addRichBatch(sRecords)
-                        if ((sParsed?.data?.size ?: 0) < limit) seriesPage = 1 else seriesPage++
-                    }
-                    HDGharTVStorage.saveCrawlerState(moviePage, seriesPage)
-                } catch (e: Exception) { Log.e(TAG, "Crawler Error: ${e.message}") } finally { crawling = false }
+                    performInitialSync(base)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Initial sync crashed: ${e.message}")
+                }
+                // Once seeded (or failed), start the rotating crawler from where we left off.
+                maybeStartCrawler(base)
             }
+            initialSyncJob = job
+            job.invokeOnCompletion {
+                // Clear so a *failed* sync is retried on the next visit.
+                synchronized(initialSyncLock) { if (initialSyncJob === job) initialSyncJob = null }
+            }
+            return job
+        }
+    }
+
+    private fun maybeStartCrawler(base: String) {
+        // FIX: compareAndSet removes the old check-then-act race, and being in the companion
+        // means all 5 providers share one crawler instead of running 5 in parallel.
+        if (!crawling.compareAndSet(false, true)) return
+        crawlerScope.launch {
+            try {
+                crawlStep(base)
+            } catch (e: Exception) {
+                Log.e(TAG, "Crawler error: ${e.message}")
+            } finally {
+                crawling.set(false)
+            }
+        }
+    }
+
+    /** One-time seed: fetch the first 2 pages of movies & series so the catalog is usable immediately. */
+    private suspend fun performInitialSync(base: String) {
+        val moviesOk = syncFirstPages(base, "movies", "movie")
+        val seriesOk = syncFirstPages(base, "series", "series")
+        if (moviesOk && seriesOk) {
+            // FIX: an explicit "initial sync done" flag replaces the old
+            // "page == 1 && records not empty" heuristic that permanently skipped pages 1–2.
+            val (moviePage, seriesPage) = HDGharTVStorage.getCrawlerState()
+            HDGharTVStorage.saveCrawlerState(maxOf(moviePage, 3), maxOf(seriesPage, 3))
+            HDGharTVStorage.markInitialSyncDone()
+        } else {
+            Log.w(TAG, "Initial sync incomplete (movies=$moviesOk, series=$seriesOk); will retry on next visit")
+        }
+    }
+
+    private suspend fun syncFirstPages(base: String, endpoint: String, type: String): Boolean {
+        for (page in 1..2) {
+            val parsed = fetchMediaPage(base, endpoint, page) ?: return false
+            val records = parsed.data?.mapNotNull { it.toLocalRecord(type) } ?: emptyList()
+            if (records.isNotEmpty()) HDGharTVStorage.addRichBatch(records)
+            if ((parsed.data?.size ?: 0) < PAGE_LIMIT) break // small catalog — no more pages
+        }
+        return true
+    }
+
+    /** Rotating background crawl: 2 movie pages + 2 series pages per visit, wrapping around at the end. */
+    private suspend fun crawlStep(base: String) {
+        var (moviePage, seriesPage) = HDGharTVStorage.getCrawlerState()
+        var moviesWrapped = false
+        var seriesWrapped = false
+
+        repeat(2) {
+            if (moviesWrapped) return@repeat
+            val parsed = fetchMediaPage(base, "movies", moviePage)
+            if (parsed != null) {
+                val records = parsed.data?.mapNotNull { it.toLocalRecord("movie") } ?: emptyList()
+                if (records.isNotEmpty()) HDGharTVStorage.addRichBatch(records)
+                if ((parsed.data?.size ?: 0) < PAGE_LIMIT) {
+                    // FIX: wrapped past the last page — stop this step (don't re-fetch page 1
+                    // in the same pass) and continue from the top on the next visit,
+                    // so pages 1–2 stay fresh.
+                    moviesWrapped = true
+                    moviePage = 1
+                } else {
+                    moviePage++
+                }
+            }
+            // parsed == null (network error): keep the page counter and retry next visit
+        }
+        repeat(2) {
+            if (seriesWrapped) return@repeat
+            val parsed = fetchMediaPage(base, "series", seriesPage)
+            if (parsed != null) {
+                val records = parsed.data?.mapNotNull { it.toLocalRecord("series") } ?: emptyList()
+                if (records.isNotEmpty()) HDGharTVStorage.addRichBatch(records)
+                if ((parsed.data?.size ?: 0) < PAGE_LIMIT) {
+                    seriesWrapped = true
+                    seriesPage = 1
+                } else {
+                    seriesPage++
+                }
+            }
+        }
+        HDGharTVStorage.saveCrawlerState(moviePage, seriesPage)
+    }
+
+    private suspend fun fetchMediaPage(base: String, endpoint: String, page: Int): ApiMediaListResponse? {
+        return try {
+            val res = app.get("$base/api/$endpoint/public?page=$page&limit=$PAGE_LIMIT", referer = "$base/")
+            tryParseJson<ApiMediaListResponse>(res.text)
+        } catch (e: Exception) {
+            Log.e(TAG, "Fetch failed: /api/$endpoint/public?page=$page — ${e.message}")
+            null
         }
     }
 
@@ -162,6 +277,8 @@ open class BaseHDGharProvider : MainAPI() {
         val loadData = LoadData(id = this.id, type = this.type, title = this.title, posterUrl = this.posterPath)
         return newMovieSearchResponse(this.title, loadData.toJson(), if (this.type == "series") TvType.TvSeries else TvType.Movie) { this.posterUrl = loadData.posterUrl }
     }
+
+    // ===================== Detail loading =====================
 
     override suspend fun load(url: String): LoadResponse? {
         val loadData = try { parseJson<LoadData>(url) } catch (e: Exception) { return null }
@@ -172,7 +289,7 @@ open class BaseHDGharProvider : MainAPI() {
             val item = tryParseJson<ApiMediaItem>(res.text) ?: return null
             val localRecord = item.toLocalRecord(loadData.type)
             if (localRecord != null) HDGharTVStorage.addRich(localRecord)
-            
+
             val title = item.title ?: item.originalTitle ?: loadData.title
             val streams = if (!item.streamingLinks.isNullOrEmpty()) item.streamingLinks.filter { link -> link.isActive != false && !link.url.isNullOrBlank() } else emptyList()
             val tags = mutableListOf<String>()
@@ -198,20 +315,22 @@ open class BaseHDGharProvider : MainAPI() {
             val viewCount = item.viewCount
             if (viewCount != null && viewCount > 0) extraInfo.append("👁️ Views: ${formatNumber(viewCount)}\n")
             val popularity = item.popularity
-            if (popularity != null && popularity > 0.0) extraInfo.append("📊 Popularity: ${"%.2f".format(popularity)}\n")
+            if (popularity != null && popularity > 0.0) extraInfo.append("📊 Popularity: ${String.format(Locale.US, "%.2f", popularity)}\n")
             val status = item.status
             if (!status.isNullOrBlank()) extraInfo.append("📌 Status: $status\n")
             val finalPlot = if (extraInfo.isNotEmpty()) "${item.overview?.trim()}\n\n--- Info ---\n$extraInfo".trim() else item.overview?.trim()
-            var scoreVal: Score? = null
+            // FIX: no score for missing/zero ratings, short formatted string, locale-stable.
             val voteAvg = item.voteAverage
-            if (voteAvg != null) scoreVal = Score.from10(voteAvg.toString())
+            val scoreVal = if (voteAvg != null && voteAvg > 0.0) Score.from10(String.format(Locale.US, "%.1f", voteAvg)) else null
 
             if (loadData.type == "movie") {
                 newMovieLoadResponse(title, url, TvType.Movie, streams.toJson()) {
                     this.posterUrl = item.posterPath ?: loadData.posterUrl
                     this.backgroundPosterUrl = item.backdropPath
                     this.plot = finalPlot
-                    this.year = item.releaseDate?.substring(0, 4)?.toIntOrNull()
+                    // FIX: take(4) instead of substring(0, 4) — an empty/short date string
+                    // used to throw and kill the whole detail page.
+                    this.year = item.releaseDate?.take(4)?.toIntOrNull()
                     this.tags = tags
                     this.duration = item.runtime
                     this.score = scoreVal
@@ -219,7 +338,7 @@ open class BaseHDGharProvider : MainAPI() {
                     this.actors = actors
                 }
             } else {
-                val episodes = mutableListOf<com.lagradost.cloudstream3.Episode>()
+                val episodes = mutableListOf<Episode>()
                 val seasonsList: List<ApiSeason> = item.seasons ?: emptyList()
                 for (season in seasonsList) {
                     val seasonNum = season.seasonNumber ?: continue
@@ -242,26 +361,47 @@ open class BaseHDGharProvider : MainAPI() {
                     this.posterUrl = item.posterPath ?: loadData.posterUrl
                     this.backgroundPosterUrl = item.backdropPath
                     this.plot = finalPlot
-                    this.year = item.firstAirDate?.substring(0, 4)?.toIntOrNull()
+                    this.year = item.firstAirDate?.take(4)?.toIntOrNull() // FIX: same as above
                     this.tags = tags
                     this.score = scoreVal
                     this.contentRating = cert
                     this.actors = actors
                 }
             }
-        } catch (e: Exception) { 
+        } catch (e: Exception) {
             Log.e(TAG, "load: ${e.message}")
-            null 
+            // FIX: if the API is unreachable, still open the detail page from the cached
+            // catalog (metadata only, no playable links).
+            loadFromCache(loadData, url)
+        }
+    }
+
+    /** Cached fallback for movies — a series with zero episodes would render an empty page, so it stays null. */
+    private fun loadFromCache(loadData: LoadData, url: String): LoadResponse? {
+        if (loadData.type != "movie") return null
+        val cached = HDGharTVStorage.getById(loadData.id) ?: return null
+        return newMovieLoadResponse(cached.title, url, TvType.Movie, "[]") {
+            this.posterUrl = cached.posterPath.ifBlank { loadData.posterUrl }
+            this.backgroundPosterUrl = cached.backdropPath.ifBlank { null }
+            this.plot = cached.overview.ifBlank { null }
+            this.year = cached.releaseDate.take(4).toIntOrNull()
+            this.tags = cached.genres + cached.spokenLanguages + cached.categories + cached.networks + cached.studios
+            this.duration = cached.runtime.takeIf { it > 0 }
+            this.score = if (cached.voteAverage > 0.0) Score.from10(String.format(Locale.US, "%.1f", cached.voteAverage)) else null
+            this.contentRating = cached.certification.ifBlank { null }
+            this.actors = cached.cast.map { ActorData(Actor(it.name), roleString = it.character) }
         }
     }
 
     private fun formatNumber(count: Int): String {
         return when {
-            count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
-            count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
+            count >= 1_000_000 -> String.format(Locale.US, "%.1fM", count / 1_000_000.0)
+            count >= 1_000 -> String.format(Locale.US, "%.1fK", count / 1_000.0)
             else -> count.toString()
         }
     }
+
+    // ===================== Link loading =====================
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         val streams = try { parseJson<List<ApiStreamLink>>(data) } catch (e: Exception) { return false }
