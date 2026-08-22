@@ -33,18 +33,23 @@ class HDGharSmartProvider : BaseHDGharProvider() {
                     hasNext = page < totalPages
                 }
                 "smart" -> {
-                    syncAndCrawl()
+                    // FIX: non-blocking on first load — the seed sync runs in the background and
+                    // the placeholder row below shows until data arrives, instead of blocking
+                    // the whole home page on 4 sequential requests.
+                    syncAndCrawl(awaitInitialSync = false)
                     val allRecords = HDGharTVStorage.getAll()
-                    
+
                     if (allRecords.isEmpty()) {
                         lists.add(HomePageList("Smart Catalog is loading... Try again in a moment.", emptyList(), isHorizontalImages = false))
                     } else {
                         val popMovies = allRecords.filter { it.type == "movie" }.sortedByDescending { it.voteAverage }.map { it.toSearchResponse() }
                         if (popMovies.isNotEmpty()) lists.add(HomePageList("🏆 Most Popular Movies (${popMovies.size})", popMovies, isHorizontalImages = false))
-                        
+
                         val popSeries = allRecords.filter { it.type == "series" }.sortedByDescending { it.voteAverage }.map { it.toSearchResponse() }
                         if (popSeries.isNotEmpty()) lists.add(HomePageList("🏆 Most Popular Series (${popSeries.size})", popSeries, isHorizontalImages = false))
 
+                        // FIX: viewCount is the real view counter now (no voteCount fallback),
+                        // so this section actually shows Most Viewed.
                         val viewed = allRecords.filter { it.viewCount > 0 }.sortedByDescending { it.viewCount }.map { it.toSearchResponse() }
                         if (viewed.isNotEmpty()) lists.add(HomePageList("👁️ Most Viewed (${viewed.size})", viewed, isHorizontalImages = false))
 
@@ -80,6 +85,11 @@ class HDGharSmartProvider : BaseHDGharProvider() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         if (query.isBlank()) return emptyList()
-        return HDGharTVStorage.getAll().filter { it.title.contains(query, ignoreCase = true) }.map { it.toSearchResponse() }
+        // FIX: seed the catalog on a fresh install instead of returning nothing —
+        // waits (once, bounded) for the initial sync to finish.
+        ensureCatalogReady()
+        return HDGharTVStorage.getAll()
+            .filter { it.title.contains(query, ignoreCase = true) }
+            .map { it.toSearchResponse() }
     }
 }
