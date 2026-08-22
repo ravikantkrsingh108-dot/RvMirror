@@ -377,7 +377,7 @@ open class BaseHDGharProvider : MainAPI() {
     }
 
     /** Cached fallback for movies — a series with zero episodes would render an empty page, so it stays null. */
-    private fun loadFromCache(loadData: LoadData, url: String): LoadResponse? {
+    private suspend fun loadFromCache(loadData: LoadData, url: String): LoadResponse? {  // FIX: added suspend
         if (loadData.type != "movie") return null
         val cached = HDGharTVStorage.getById(loadData.id) ?: return null
         return newMovieLoadResponse(cached.title, url, TvType.Movie, "[]") {
