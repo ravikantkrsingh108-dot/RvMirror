@@ -4,9 +4,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
-import org.jsoup.select.Elements
 import com.lagradost.cloudstream3.LoadResponse.Companion.addImdbUrl
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.api.Log
@@ -18,7 +18,6 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
 
-/** data markers for the shuffle catalogs */
 const val RANDOM_MOVIES = "random:movies"
 const val RANDOM_SERIES = "random:series"
 
@@ -60,18 +59,15 @@ open class VegaMoviesProvider : MainAPI() {
         }
     }
 
-    // ---------- caches ----------
-    private val pageCache = ConcurrentHashMap<String, Int>()   // category -> last page number
-    private val countCache = ConcurrentHashMap<String, Int>()  // catalog -> exact total count
+    private val pageCache = ConcurrentHashMap<String, Int>()
+    private val countCache = ConcurrentHashMap<String, Int>()
 
-    /** keys used to scrape the info block on the content page */
     private val infoKeys = listOf(
         "quality", "language", "audio", "subtitle", "size", "format",
         "resolution", "runtime", "duration", "release date",
         "original language", "running time", "season", "episodes"
     )
 
-    // ---------- home page ----------
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
         "$mainUrl/category/web-series/netflix/page/%d/" to "Netflix",
@@ -95,7 +91,6 @@ open class VegaMoviesProvider : MainAPI() {
         RANDOM_SERIES to "🔀 Series Shuffle"
     )
 
-    // pools for the shuffle catalogs (adjust slugs if a site uses different ones)
     private fun movieCategories() = listOf(
         "$mainUrl/category/hindi-movies",
         "$mainUrl/category/bollywood",
@@ -120,7 +115,6 @@ open class VegaMoviesProvider : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        // 🔀 shuffle catalogs -> fresh random content every time
         if (request.data.startsWith("random:")) {
             val home = getRandomContent(request.data.substringAfter("random:"))
             return newHomePageResponse(request.name, home)
@@ -129,7 +123,6 @@ open class VegaMoviesProvider : MainAPI() {
         val document = app.get(request.data.format(page)).document
         val home = document.select("div.movies-grid > a").mapNotNull { it.toSearchResult() }
 
-        // 🔢 total content count after the label
         val total = getTotalCount(request.data, document, home.size)
         val label = if (total != null && total > 0) "${request.name} (${formatCount(total)})" else request.name
 
@@ -159,12 +152,12 @@ open class VegaMoviesProvider : MainAPI() {
         return newSearchResponseList(results)
     }
 
-    // ---------- helpers: counts / shuffle ----------
+    // ---------- counts / shuffle ----------
     private fun getLastPage(document: Document): Int {
         val fromText = document.select("a.page-numbers, span.page-numbers, .pagination a, .nav-links a")
             .mapNotNull { it.text().filter(Char::isDigit).toIntOrNull() }
-        val fromHref = document.select("""a[href*="/page/"]""")
-            .mapNotNull { Regex("""/page/(\d+)""").find(it.attr("href"))?.groupValues?.get(1)?.toIntOrNull() }
+        val fromHref = document.select("a[href*=\"/page/\"]")
+            .mapNotNull { Regex("/page/(\\d+)").find(it.attr("href"))?.groupValues?.get(1)?.toIntOrNull() }
         return (fromText + fromHref).maxOrNull() ?: 1
     }
 
@@ -172,7 +165,6 @@ open class VegaMoviesProvider : MainAPI() {
         val cacheKey = catalogUrl.substringBefore("/page/").trimEnd('/')
         countCache[cacheKey]?.let { return it }
 
-        // 1) exact count via the WordPress REST API (if not disabled on the site)
         try {
             if (catalogUrl.contains("/category/")) {
                 val slug = cacheKey.substringAfterLast('/')
@@ -184,19 +176,16 @@ open class VegaMoviesProvider : MainAPI() {
                 }
             } else {
                 val res = app.get("$mainUrl/wp-json/wp/v2/posts?per_page=1&_fields=id", timeout = 5000L)
-                val count = res.headers.entries
-                    .firstOrNull { it.key.equals("X-WP-Total", true) }
-                    ?.value?.toIntOrNull() ?: 0
+                val count = res.headers["X-WP-Total"]?.toIntOrNull() ?: 0
                 if (count > 0) {
                     countCache[cacheKey] = count
                     return count
                 }
             }
         } catch (e: Exception) {
-            // REST API disabled/blocked -> estimate from pagination
+            // REST API disabled/blocked -> estimate from pagination below
         }
 
-        // 2) fallback: pages x items-per-page
         val lastPage = getLastPage(document)
         pageCache[cacheKey] = lastPage
         return if (itemsOnPage > 0 && lastPage > 0) itemsOnPage * lastPage else null
@@ -237,12 +226,12 @@ open class VegaMoviesProvider : MainAPI() {
         return emptyList()
     }
 
-    // ---------- helpers: content page details ----------
+    // ---------- content page helpers ----------
     private fun parseDuration(runtime: String?): Int? {
         if (runtime.isNullOrBlank()) return null
         var minutes = 0
-        Regex("""(\d+)\s*h""").find(runtime)?.groupValues?.get(1)?.toIntOrNull()?.let { minutes += it * 60 }
-        Regex("""(\d+)\s*m""").find(runtime)?.groupValues?.get(1)?.toIntOrNull()?.let { minutes += it }
+        Regex("(\\d+)\\s*h").find(runtime)?.groupValues?.get(1)?.toIntOrNull()?.let { minutes += it * 60 }
+        Regex("(\\d+)\\s*m").find(runtime)?.groupValues?.get(1)?.toIntOrNull()?.let { minutes += it }
         if (minutes > 0) return minutes
         return runtime.filter(Char::isDigit).toIntOrNull()?.takeIf { it in 1..1000 }
     }
@@ -254,7 +243,7 @@ open class VegaMoviesProvider : MainAPI() {
             raw.contains("youtube.com/embed/") -> "https://www.youtube.com/watch?v=${raw.substringAfter("embed/").substringBefore("?").substringBefore("&")}"
             raw.contains("youtube.com/watch") -> raw
             raw.startsWith("http") -> raw
-            else -> "https://www.youtube.com/watch?v=$raw" // cinemeta sends the raw YouTube id
+            else -> "https://www.youtube.com/watch?v=$raw"
         }
     }
 
@@ -280,7 +269,6 @@ open class VegaMoviesProvider : MainAPI() {
             ?.nextElementSibling()
             ?.text()
 
-        // NEW: scrape info lines like "Quality: ... Language: ... Audio: ..." from the post
         val siteInfo = document.select("main p, article p, div.thecontent p, div.entry-content p")
             .map { it.text().trim() }
             .filter { it.contains(":") && infoKeys.any { key -> it.lowercase().contains("$key:") } }
@@ -310,7 +298,6 @@ open class VegaMoviesProvider : MainAPI() {
             background = responseData.meta.background ?: background
         }
 
-        // NEW: append the scraped info block to the plot
         if (siteInfo.isNotBlank()) {
             description = listOfNotNull(
                 description?.takeIf { it.isNotBlank() },
@@ -318,24 +305,19 @@ open class VegaMoviesProvider : MainAPI() {
             ).joinToString("\n\n")
         }
 
-        // NEW: language / country as tags
-        val extraTags = buildList {
-            responseData?.meta?.language?.split(",")?.map { it.trim() }
-                ?.filter { it.isNotBlank() }?.take(2)?.let { addAll(it) }
-            responseData?.meta?.country?.takeIf { it.isNotBlank() }?.let { add(it) }
-        }
+        val extraTags = mutableListOf<String>()
+        responseData?.meta?.language?.split(",")?.map { it.trim() }
+            ?.filter { it.isNotBlank() }?.take(2)?.let { extraTags.addAll(it) }
+        responseData?.meta?.country?.takeIf { it.isNotBlank() }?.let { extraTags.add(it) }
 
-        // NEW: runtime -> duration
         val duration = parseDuration(responseData?.meta?.runtime)
 
-        // NEW: status -> ongoing/completed badge
         val showStatus = when (responseData?.meta?.status?.lowercase()?.trim()) {
             "returning series", "running", "continuing" -> ShowStatus.Ongoing
             "ended", "completed", "canceled", "cancelled" -> ShowStatus.Completed
             else -> null
         }
 
-        // NEW: trailer (cinemeta first, then iframe on the page)
         val trailerUrl = normalizeTrailer(
             responseData?.meta?.trailers?.firstOrNull { !it.source.isNullOrBlank() }?.source
                 ?: responseData?.meta?.youtubeTrailer
