@@ -3,14 +3,24 @@ package com.megix
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Document
 import org.jsoup.select.Elements
 import com.lagradost.cloudstream3.LoadResponse.Companion.addImdbUrl
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import com.lagradost.api.Log
 import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.random.Random
+
+/** data markers for the shuffle catalogs */
+const val RANDOM_MOVIES = "random:movies"
+const val RANDOM_SERIES = "random:series"
 
 open class VegaMoviesProvider : MainAPI() {
     override var mainUrl = "https://vegamovies.vodka"
@@ -50,30 +60,87 @@ open class VegaMoviesProvider : MainAPI() {
         }
     }
 
+    // ---------- caches ----------
+    private val pageCache = ConcurrentHashMap<String, Int>()   // category -> last page number
+    private val countCache = ConcurrentHashMap<String, Int>()  // catalog -> exact total count
+
+    /** keys used to scrape the info block on the content page */
+    private val infoKeys = listOf(
+        "quality", "language", "audio", "subtitle", "size", "format",
+        "resolution", "runtime", "duration", "release date",
+        "original language", "running time", "season", "episodes"
+    )
+
+    // ---------- home page ----------
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
         "$mainUrl/category/web-series/netflix/page/%d/" to "Netflix",
-        "$mainUrl/category/web-series/disney-plus-hotstar/page/%d/" to "Disney Plus Hotstar",
         "$mainUrl/category/web-series/amazon-prime-video/page/%d/" to "Amazon Prime",
+        "$mainUrl/category/web-series/disney-plus-hotstar/page/%d/" to "Disney+ Hotstar",
+        "$mainUrl/category/web-series/zee5/page/%d/" to "ZEE5",
+        "$mainUrl/category/web-series/sonyliv/page/%d/" to "SonyLIV",
+        "$mainUrl/category/web-series/jio-cinema/page/%d/" to "JioCinema",
         "$mainUrl/category/web-series/mx-original/page/%d/" to "MX Original",
+        "$mainUrl/category/web-series/altbalaji/page/%d/" to "ALT Balaji",
+        "$mainUrl/category/web-series/hoichoi/page/%d/" to "Hoichoi",
         "$mainUrl/category/anime-series/page/%d/" to "Anime Series",
-        "$mainUrl/category/korean-series/page/%d/" to "Korean Series"
+        "$mainUrl/category/korean-series/page/%d/" to "Korean Series",
+        "$mainUrl/category/chinese-series/page/%d/" to "Chinese Series",
+        "$mainUrl/category/hindi-movies/page/%d/" to "Hindi Movies",
+        "$mainUrl/category/bollywood/page/%d/" to "Bollywood",
+        "$mainUrl/category/south-hindi-dubbed/page/%d/" to "South Hindi Dubbed",
+        "$mainUrl/category/hollywood/page/%d/" to "Hollywood",
+        "$mainUrl/category/dual-audio/page/%d/" to "Dual Audio",
+        RANDOM_MOVIES to "🔀 Movies Shuffle",
+        RANDOM_SERIES to "🔀 Series Shuffle"
+    )
+
+    // pools for the shuffle catalogs (adjust slugs if a site uses different ones)
+    private fun movieCategories() = listOf(
+        "$mainUrl/category/hindi-movies",
+        "$mainUrl/category/bollywood",
+        "$mainUrl/category/south-hindi-dubbed",
+        "$mainUrl/category/hollywood",
+        "$mainUrl/category/dual-audio",
+        "$mainUrl/category/punjabi-movies"
+    )
+
+    private fun seriesCategories() = listOf(
+        "$mainUrl/category/web-series/netflix",
+        "$mainUrl/category/web-series/amazon-prime-video",
+        "$mainUrl/category/web-series/disney-plus-hotstar",
+        "$mainUrl/category/web-series/zee5",
+        "$mainUrl/category/web-series/sonyliv",
+        "$mainUrl/category/web-series/jio-cinema",
+        "$mainUrl/category/anime-series",
+        "$mainUrl/category/korean-series"
     )
 
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
+        // 🔀 shuffle catalogs -> fresh random content every time
+        if (request.data.startsWith("random:")) {
+            val home = getRandomContent(request.data.substringAfter("random:"))
+            return newHomePageResponse(request.name, home)
+        }
+
         val document = app.get(request.data.format(page)).document
         val home = document.select("div.movies-grid > a").mapNotNull { it.toSearchResult() }
-        return newHomePageResponse(request.name, home)
+
+        // 🔢 total content count after the label
+        val total = getTotalCount(request.data, document, home.size)
+        val label = if (total != null && total > 0) "${request.name} (${formatCount(total)})" else request.name
+
+        return newHomePageResponse(label, home)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
         val title = this.select("img").attr("alt").replace("Download ", "")
         val href = this.attr("href")
         var posterUrl = this.select("img").attr("src")
-        if(!posterUrl.contains("https:")) posterUrl =  this.select("img").attr("data-src")
+        if (!posterUrl.contains("https:")) posterUrl = this.select("img").attr("data-src")
 
         return newMovieSearchResponse(title, URI(href).path, TvType.Movie) {
             this.posterUrl = posterUrl
@@ -92,11 +159,110 @@ open class VegaMoviesProvider : MainAPI() {
         return newSearchResponseList(results)
     }
 
+    // ---------- helpers: counts / shuffle ----------
+    private fun getLastPage(document: Document): Int {
+        val fromText = document.select("a.page-numbers, span.page-numbers, .pagination a, .nav-links a")
+            .mapNotNull { it.text().filter(Char::isDigit).toIntOrNull() }
+        val fromHref = document.select("""a[href*="/page/"]""")
+            .mapNotNull { Regex("""/page/(\d+)""").find(it.attr("href"))?.groupValues?.get(1)?.toIntOrNull() }
+        return (fromText + fromHref).maxOrNull() ?: 1
+    }
+
+    private suspend fun getTotalCount(catalogUrl: String, document: Document, itemsOnPage: Int): Int? {
+        val cacheKey = catalogUrl.substringBefore("/page/").trimEnd('/')
+        countCache[cacheKey]?.let { return it }
+
+        // 1) exact count via the WordPress REST API (if not disabled on the site)
+        try {
+            if (catalogUrl.contains("/category/")) {
+                val slug = cacheKey.substringAfterLast('/')
+                val res = app.get("$mainUrl/wp-json/wp/v2/categories?slug=$slug&_fields=count", timeout = 5000L)
+                val count = JSONArray(res.text).optJSONObject(0)?.optInt("count") ?: 0
+                if (count > 0) {
+                    countCache[cacheKey] = count
+                    return count
+                }
+            } else {
+                val res = app.get("$mainUrl/wp-json/wp/v2/posts?per_page=1&_fields=id", timeout = 5000L)
+                val count = res.headers.entries
+                    .firstOrNull { it.key.equals("X-WP-Total", true) }
+                    ?.value?.toIntOrNull() ?: 0
+                if (count > 0) {
+                    countCache[cacheKey] = count
+                    return count
+                }
+            }
+        } catch (e: Exception) {
+            // REST API disabled/blocked -> estimate from pagination
+        }
+
+        // 2) fallback: pages x items-per-page
+        val lastPage = getLastPage(document)
+        pageCache[cacheKey] = lastPage
+        return if (itemsOnPage > 0 && lastPage > 0) itemsOnPage * lastPage else null
+    }
+
+    private fun formatCount(count: Int): String = when {
+        count >= 1_000_000 -> String.format(Locale.US, "%.1fM", count / 1_000_000.0)
+        count >= 1000 -> String.format(Locale.US, "%.1fK", count / 1000.0)
+        else -> count.toString()
+    }
+
+    private suspend fun getRandomContent(type: String): List<SearchResponse> {
+        val categories = if (type.equals("movies", true)) movieCategories() else seriesCategories()
+
+        repeat(3) {
+            try {
+                val category = categories.random()
+
+                var page1Doc: Document? = null
+                val lastPage = pageCache[category] ?: run {
+                    val doc = app.get("$category/page/1/").document
+                    getLastPage(doc).also {
+                        pageCache[category] = it
+                        page1Doc = doc
+                    }
+                }
+
+                val randomPage = Random.nextInt(1, lastPage.coerceAtLeast(1) + 1)
+                val doc = if (randomPage == 1 && page1Doc != null) page1Doc!!
+                          else app.get("$category/page/$randomPage/").document
+
+                val items = doc.select("div.movies-grid > a").mapNotNull { it.toSearchResult() }.shuffled()
+                if (items.isNotEmpty()) return items
+            } catch (e: Exception) {
+                Log.d("VegaMovies", "shuffle failed: ${e.message}")
+            }
+        }
+        return emptyList()
+    }
+
+    // ---------- helpers: content page details ----------
+    private fun parseDuration(runtime: String?): Int? {
+        if (runtime.isNullOrBlank()) return null
+        var minutes = 0
+        Regex("""(\d+)\s*h""").find(runtime)?.groupValues?.get(1)?.toIntOrNull()?.let { minutes += it * 60 }
+        Regex("""(\d+)\s*m""").find(runtime)?.groupValues?.get(1)?.toIntOrNull()?.let { minutes += it }
+        if (minutes > 0) return minutes
+        return runtime.filter(Char::isDigit).toIntOrNull()?.takeIf { it in 1..1000 }
+    }
+
+    private fun normalizeTrailer(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        return when {
+            raw.contains("youtu.be/") -> "https://www.youtube.com/watch?v=${raw.substringAfterLast("/").substringBefore("?")}"
+            raw.contains("youtube.com/embed/") -> "https://www.youtube.com/watch?v=${raw.substringAfter("embed/").substringBefore("?").substringBefore("&")}"
+            raw.contains("youtube.com/watch") -> raw
+            raw.startsWith("http") -> raw
+            else -> "https://www.youtube.com/watch?v=$raw" // cinemeta sends the raw YouTube id
+        }
+    }
+
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(fixUrl(url)).document
-        var title = document.select("title").text().replace("Download ", "")
+        var title = document.select("title").text().replace("Download ", "").substringBefore("|").trim()
         var posterUrl = document.select("p > img").attr("src")
-        val imdbUrl =  document.select("a[href*=\"imdb\"]").attr("href")
+        val imdbUrl = document.select("a[href*=\"imdb\"]").attr("href")
         val imdbId = imdbUrl.substringAfter("title/").substringBefore("/")
 
         val tvtype = if (
@@ -114,6 +280,14 @@ open class VegaMoviesProvider : MainAPI() {
             ?.nextElementSibling()
             ?.text()
 
+        // NEW: scrape info lines like "Quality: ... Language: ... Audio: ..." from the post
+        val siteInfo = document.select("main p, article p, div.thecontent p, div.entry-content p")
+            .map { it.text().trim() }
+            .filter { it.contains(":") && infoKeys.any { key -> it.lowercase().contains("$key:") } }
+            .distinct()
+            .take(8)
+            .joinToString("\n")
+
         val jsonResponse = app.get("$cinemeta_url/$tvtype/$imdbId.json").text
         val responseData = tryParseJson<ResponseData>(jsonResponse)
 
@@ -123,16 +297,50 @@ open class VegaMoviesProvider : MainAPI() {
         var year: String = ""
         var background: String = posterUrl
 
-        if(responseData != null) {
+        if (responseData != null) {
             description = responseData.meta.description ?: description
             cast = responseData.meta.cast ?: emptyList()
             title = responseData.meta.name ?: title
             genre = responseData.meta.genre ?: emptyList()
             imdbRating = responseData.meta.imdbRating ?: ""
-            year = responseData.meta.year ?: ""
+            year = responseData.meta.year
+                ?: responseData.meta.releaseInfo?.substringBefore("–")?.substringBefore("-")?.trim()
+                ?: ""
             posterUrl = responseData.meta.poster ?: posterUrl
             background = responseData.meta.background ?: background
         }
+
+        // NEW: append the scraped info block to the plot
+        if (siteInfo.isNotBlank()) {
+            description = listOfNotNull(
+                description?.takeIf { it.isNotBlank() },
+                siteInfo
+            ).joinToString("\n\n")
+        }
+
+        // NEW: language / country as tags
+        val extraTags = buildList {
+            responseData?.meta?.language?.split(",")?.map { it.trim() }
+                ?.filter { it.isNotBlank() }?.take(2)?.let { addAll(it) }
+            responseData?.meta?.country?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }
+
+        // NEW: runtime -> duration
+        val duration = parseDuration(responseData?.meta?.runtime)
+
+        // NEW: status -> ongoing/completed badge
+        val showStatus = when (responseData?.meta?.status?.lowercase()?.trim()) {
+            "returning series", "running", "continuing" -> ShowStatus.Ongoing
+            "ended", "completed", "canceled", "cancelled" -> ShowStatus.Completed
+            else -> null
+        }
+
+        // NEW: trailer (cinemeta first, then iframe on the page)
+        val trailerUrl = normalizeTrailer(
+            responseData?.meta?.trailers?.firstOrNull { !it.source.isNullOrBlank() }?.source
+                ?: responseData?.meta?.youtubeTrailer
+                ?: document.selectFirst("iframe[src*=\"youtube.com\"], iframe[src*=\"youtu.be\"]")?.attr("src")
+        )
 
         if (tvtype == "series") {
             val hTags = document.select("main > h3:matches((?i)(4K|[0-9]*0p)),main > h5:matches((?i)(4K|[0-9]*0p))")
@@ -152,14 +360,14 @@ open class VegaMoviesProvider : MainAPI() {
                     tag.select("a")
                 }
 
-                var unilink = aTags ?. find {
+                var unilink = aTags?.find {
                     it.text().contains("V-Cloud", ignoreCase = true) ||
                     it.text().contains("Episode", ignoreCase = true) ||
                     it.text().contains("Download", ignoreCase = true)
                 }
 
                 if (unilink == null) {
-                    unilink = aTags ?. find {
+                    unilink = aTags?.find {
                         it.text().contains("G-Direct", ignoreCase = true)
                     }
                 }
@@ -168,7 +376,7 @@ open class VegaMoviesProvider : MainAPI() {
                 Eurl?.let { eurl ->
                     val document2 = app.get(eurl).document
                     val vcloudLinks = document2.select("p > a").mapNotNull {
-                        if(it.attr("href").contains("vcloud", true)) {
+                        if (it.attr("href").contains("vcloud", true)) {
                             it.attr("href")
                         } else {
                             null
@@ -191,14 +399,13 @@ open class VegaMoviesProvider : MainAPI() {
 
             for ((key, value) in episodesMap) {
                 val episodeInfo = responseData?.meta?.videos?.find { it.season == key.first && it.episode == key.second }
-                val data = value.map { source->
-                    EpisodeLink(
-                        source
-                    )
+                val data = value.map { source ->
+                    EpisodeLink(source)
                 }
                 tvSeriesEpisodes.add(
                     newEpisode(data) {
                         this.name = episodeInfo?.name ?: episodeInfo?.title
+                            ?: "Season ${key.first} - Episode ${key.second}"
                         this.season = key.first
                         this.episode = key.second
                         this.posterUrl = episodeInfo?.thumbnail
@@ -210,10 +417,13 @@ open class VegaMoviesProvider : MainAPI() {
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, tvSeriesEpisodes) {
                 this.posterUrl = posterUrl
                 this.plot = description
-                this.tags = genre
+                this.tags = (genre + extraTags).distinct()
                 this.score = Score.from10(imdbRating)
                 this.year = year.toIntOrNull() ?: year.substringBefore("–").toIntOrNull()
+                this.duration = duration
+                this.showStatus = showStatus
                 this.backgroundPosterUrl = background
+                trailerUrl?.let { addTrailer(it) }
                 addActors(cast)
                 addImdbUrl(imdbUrl)
             }
@@ -228,10 +438,12 @@ open class VegaMoviesProvider : MainAPI() {
             return newMovieLoadResponse(title, url, TvType.Movie, data) {
                 this.posterUrl = posterUrl
                 this.plot = description
-                this.tags = genre
+                this.tags = (genre + extraTags).distinct()
                 this.score = Score.from10(imdbRating)
                 this.year = year.toIntOrNull()
+                this.duration = duration
                 this.backgroundPosterUrl = background
+                trailerUrl?.let { addTrailer(it) }
                 addActors(cast)
                 addImdbUrl(imdbUrl)
             }
@@ -247,7 +459,7 @@ open class VegaMoviesProvider : MainAPI() {
         val sources = parseJson<ArrayList<EpisodeLink>>(data)
         sources.amap {
             val source = it.source
-            if(source.contains("vcloud")) VCloud().getUrl(source, "", subtitleCallback, callback)
+            if (source.contains("vcloud")) VCloud().getUrl(source, "", subtitleCallback, callback)
             else loadExtractor(source, "", subtitleCallback, callback)
         }
         return true
@@ -272,7 +484,14 @@ open class VegaMoviesProvider : MainAPI() {
         val country: String?,
         val imdbRating: String?,
         val year: String?,
+        val trailers: List<CinemetaTrailer>?,
+        val youtubeTrailer: String?,
         val videos: List<EpisodeDetails>?,
+    )
+
+    data class CinemetaTrailer(
+        val source: String?,
+        val type: String?
     )
 
     data class EpisodeDetails(
