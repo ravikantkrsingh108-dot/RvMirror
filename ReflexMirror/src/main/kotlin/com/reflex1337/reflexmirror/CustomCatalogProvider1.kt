@@ -101,18 +101,20 @@ class CustomCatalogProvider1 : MainAPI() {
      *  - optional shuffling
      *  - an item cap
      *  - the ACTUAL shown count in the title
+     *  - wide = true -> 16:9 landscape cards (isHorizontalLayout)
      */
     private fun addRow(
         rows: MutableList<HomePageList>,
         name: String,
         items: List<SearchResponse>,
         minSize: Int = MIN_ROW_SIZE,
-        shuffle: Boolean = true
+        shuffle: Boolean = true,
+        wide: Boolean = true
     ) {
         if (items.size < minSize) return
         var list = if (shuffle) items.shuffled() else items
         if (list.size > MAX_ITEMS_PER_ROW) list = list.take(MAX_ITEMS_PER_ROW)
-        rows.add(HomePageList("$name (${list.size})", list))
+        rows.add(HomePageList("$name (${list.size})", list, isHorizontalLayout = wide))
     }
 
     private fun allRecords(): List<Triple<Ott, String, CatalogRecord>> =
