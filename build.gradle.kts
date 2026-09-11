@@ -24,6 +24,7 @@ allprojects {
         google()
         mavenCentral()
         maven("https://jitpack.io")
+        maven("https://recloudstream.github.io/maven/") // <- ADDED: always-fresh cloudstream3 stub
     }
 }
 
