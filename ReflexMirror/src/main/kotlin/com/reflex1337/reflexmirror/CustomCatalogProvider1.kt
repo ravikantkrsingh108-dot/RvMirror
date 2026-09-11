@@ -17,7 +17,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
-class CustomCatalogProvider1 : MainAPI() {
+class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
         private const val MIN_ROW_SIZE = 25
@@ -50,7 +50,7 @@ class CustomCatalogProvider1 : MainAPI() {
     )
     override var lang = "en"
     override var mainUrl = "https://net52.cc"
-    override var name = "NetMirror"
+    override var name = "All NetMirror"
     override val hasMainPage = true
 
     override val mainPage = mainPageOf(
@@ -77,13 +77,12 @@ class CustomCatalogProvider1 : MainAPI() {
         val code: String,
         val label: String,
         val path: String,
-        val poster: String,     // Changed to point to horizontal endpoint
-        val backdrop: String,   // High-res horizontal banner
+        val poster: String,     
+        val backdrop: String,   
         val epDir: String,
         val emoji: String
     )
 
-    // Updated poster endpoints to horizontal / landscape paths
     private val otts = listOf(
         Ott("nf", "Netflix", "", "poster/h", "poster/h", "epimg", "🔴"),
         Ott("pv", "Prime Video", "pv/", "pv/h", "pv/h", "pvepimg", "🟣"),
@@ -103,10 +102,8 @@ class CustomCatalogProvider1 : MainAPI() {
         return c
     }
 
-    // Generates landscape (horizontal 16:9) image URLs
     private fun landscapePosterUrl(o: Ott, id: String) = "https://imgcdn.kim/${o.backdrop}/$id.jpg"
 
-    // Card generator forced to use landscape poster format and clean titles
     private fun card(o: Ott, id: String, title: String = ""): SearchResponse {
         val cleanedTitle = cleanTitle(title)
         return newAnimeSearchResponse(cleanedTitle, Ref(id, o.code).toJson()) {
@@ -175,23 +172,23 @@ class CustomCatalogProvider1 : MainAPI() {
             }
 
             if (ottMovies.size >= MIN_ROW_SIZE) {
-                rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled(), HorizontalSeekHide.Landscape))
+                rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled(), horizontalSeekHide = false))
             }
             if (ottSeries.size >= MIN_ROW_SIZE) {
-                rows.add(HomePageList("${o.emoji} ${o.label} Series (${ottSeries.size})", ottSeries.shuffled(), HorizontalSeekHide.Landscape))
+                rows.add(HomePageList("${o.emoji} ${o.label} Series (${ottSeries.size})", ottSeries.shuffled(), horizontalSeekHide = false))
             }
         }
 
         val recent = recentItems.sortedByDescending { it.first }.map { it.second }.take(MAX_ITEMS_PER_ROW)
         if (recent.size >= MIN_ROW_SIZE) {
-            rows.add(0, HomePageList("✨ Recently Added (${recent.size})", recent, HorizontalSeekHide.Landscape))
+            rows.add(0, HomePageList("✨ Recently Added (${recent.size})", recent, horizontalSeekHide = false))
         }
 
         if (allMovies.isNotEmpty()) {
-            rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled(), HorizontalSeekHide.Landscape))
+            rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled(), horizontalSeekHide = false))
         }
         if (allSeries.isNotEmpty()) {
-            rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled(), HorizontalSeekHide.Landscape))
+            rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled(), horizontalSeekHide = false))
         }
 
         genreBuckets.entries
@@ -199,7 +196,7 @@ class CustomCatalogProvider1 : MainAPI() {
             .sortedByDescending { it.value.size }
             .take(MAX_ROWS_PER_TAB)
             .forEach { (genre, items) ->
-                rows.add(HomePageList("🎭 $genre (${items.size})", items.shuffled(), HorizontalSeekHide.Landscape))
+                rows.add(HomePageList("🎭 $genre (${items.size})", items.shuffled(), horizontalSeekHide = false))
             }
 
         return rows
@@ -219,7 +216,7 @@ class CustomCatalogProvider1 : MainAPI() {
         return byLang.entries
             .filter { it.value.size >= MIN_ROW_SIZE }
             .sortedByDescending { it.value.size }
-            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled(), HorizontalSeekHide.Landscape) }
+            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled(), horizontalSeekHide = false) }
     }
 
     private fun yearRows(): List<HomePageList> {
@@ -234,7 +231,7 @@ class CustomCatalogProvider1 : MainAPI() {
         return byDecade.entries
             .filter { it.value.size >= 3 }
             .sortedByDescending { it.key }
-            .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled(), HorizontalSeekHide.Landscape) }
+            .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled(), horizontalSeekHide = false) }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -405,7 +402,6 @@ class CustomCatalogProvider1 : MainAPI() {
         else -> "🌐"
     }
 
-    // --- SMART SUGGESTION GRAPH CRAWLER ---
     private fun kickCrawler() {
         if (crawling) return
         crawling = true
