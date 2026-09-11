@@ -69,7 +69,7 @@ class CustomCatalogProvider : MainAPI() {
     )
 
     private val otts = listOf(
-        Ott("nf", "Netflix", "", "poster/v", "poster/v", "epimg", "🔴"),
+        Ott("nf", "Netflix", "", "poster/v", "poster/h", "epimg", "🔴"),
         Ott("pv", "Prime Video", "pv/", "pv/v", "pv/h", "pvepimg", "🟣"),
         Ott("hs", "Hotstar", "hs/", "hs/v", "hs/h", "hsepimg", "🟠")
     )
