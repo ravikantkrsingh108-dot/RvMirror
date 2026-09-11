@@ -15,7 +15,7 @@ open class reflexmirrorPlugin: Plugin() {
         CustomCatalogProvider.context = context
 
         // Register core standard providers
-        registerMainAPI(NetflixMirrorProvider()
+        registerMainAPI(NetflixMirrorProvider())
         registerMainAPI(CustomCatalogProvider1())
         registerMainAPI(PrimeVideoMirrorProvider())
         registerMainAPI(HotStarMirrorProvider())
