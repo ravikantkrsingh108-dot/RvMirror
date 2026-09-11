@@ -20,10 +20,10 @@ import kotlinx.coroutines.delay
 class CustomCatalogProvider : MainAPI() {
     companion object {
         var context: Context? = null
-        private const val MIN_ROW_SIZE = 25
-        private const val MAX_ROWS_PER_TAB = 100
+        private const val MIN_ROW_SIZE = 15
+        private const val MAX_ROWS_PER_TAB = 150
         private const val MAX_ITEMS_PER_ROW = 500
-        private const val CRAWLER_BATCH_SIZE = 5
+        private const val CRAWLER_BATCH_SIZE = 10
     }
 
     override val supportedTypes = setOf(
@@ -34,7 +34,7 @@ class CustomCatalogProvider : MainAPI() {
     )
     override var lang = "en"
     override var mainUrl = "https://net52.cc"
-    override var name = "All NetMirror"
+    override var name = "NetMirror"
     override val hasMainPage = true
 
     override val mainPage = mainPageOf(
