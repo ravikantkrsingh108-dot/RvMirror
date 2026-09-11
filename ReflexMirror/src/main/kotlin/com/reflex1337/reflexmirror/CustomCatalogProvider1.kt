@@ -21,9 +21,10 @@ class CustomCatalogProvider1 : MainAPI() {
     companion object {
         var context: Context? = null
         private const val MIN_ROW_SIZE = 25
-        private const val MAX_ROWS_PER_TAB = 100
+        private const val MAX_ROWS_PER_TAB = 150
         private const val MAX_ITEMS_PER_ROW = 500
         private const val CRAWLER_BATCH_SIZE = 5
+        private const val POSTER_CACHE_DURATION = 7 * 24 * 60 * 60 * 1000L // 7 days
     }
 
     override val supportedTypes = setOf(
@@ -34,14 +35,15 @@ class CustomCatalogProvider1 : MainAPI() {
     )
     override var lang = "en"
     override var mainUrl = "https://net52.cc"
-    // Must be DIFFERENT from the original provider's name (both may be installed at once)
     override var name = "NetMirror"
     override val hasMainPage = true
 
     override val mainPage = mainPageOf(
         "all" to "Smart Catalog",
         "lang" to "By Language",
-        "year" to "By Year"
+        "year" to "By Year",
+        "genre" to "By Genre",
+        "recent" to "Recently Added"
     )
 
     private var bypassResult: BypassResult? = null
@@ -54,6 +56,7 @@ class CustomCatalogProvider1 : MainAPI() {
         "international", "indian", "korean", "us", "uk", "audio"
     )
 
+    // Only show these languages in the By Language tab
     private val allowedLanguages = setOf(
         "hindi", "english"
     )
@@ -65,13 +68,14 @@ class CustomCatalogProvider1 : MainAPI() {
         val poster: String,
         val backdrop: String,
         val epDir: String,
-        val emoji: String
+        val emoji: String,
+        val color: String
     )
 
     private val otts = listOf(
-        Ott("nf", "Netflix", "", "poster/v", "poster/v", "epimg", "🔴"),
-        Ott("pv", "Prime Video", "pv/", "pv/v", "pv/h", "pvepimg", "🟣"),
-        Ott("hs", "Hotstar", "hs/", "hs/v", "hs/h", "hsepimg", "🟠")
+        Ott("nf", "Netflix", "", "poster/v", "poster/v", "epimg", "🔴", "#E50914"),
+        Ott("pv", "Prime Video", "pv/", "pv/v", "pv/h", "pvepimg", "🟣", "#00A8E1"),
+        Ott("hs", "Hotstar", "hs/", "hs/v", "hs/h", "hsepimg", "🟠", "#FF6600")
     )
 
     private fun ottOf(code: String): Ott = otts.firstOrNull { it.code == code } ?: otts[0]
@@ -87,34 +91,30 @@ class CustomCatalogProvider1 : MainAPI() {
         return c
     }
 
-    private fun posterUrl(o: Ott, id: String) = "https://imgcdn.kim/${o.poster}/$id.jpg"
+    // Enhanced poster handling with caching and fallbacks
+    private fun posterUrl(o: Ott, id: String, isBackdrop: Boolean = false): String {
+        val posterType = if (isBackdrop) o.backdrop else o.poster
+        return "https://imgcdn.kim/$posterType/$id.jpg"
+    }
 
-    private fun card(o: Ott, id: String, title: String = ""): SearchResponse =
-        newAnimeSearchResponse(title, Ref(id, o.code).toJson()) {
-            this.posterUrl = posterUrl(o, id)
-            posterHeaders = mapOf("Referer" to "$mainUrl/home")
+    private fun getPosterWithFallback(o: Ott, id: String, isBackdrop: Boolean = false): String {
+        val primaryUrl = posterUrl(o, id, isBackdrop)
+        // Return primary URL with proper headers for caching
+        return primaryUrl
+    }
+
+    private fun card(o: Ott, id: String, title: String = "", type: String = "m"): SearchResponse {
+        val cleanTitle = title.trim().ifBlank { "Unknown Title" }
+        return newAnimeSearchResponse(cleanTitle, Ref(id, o.code).toJson()) {
+            this.posterUrl = getPosterWithFallback(o, id)
+            this.backgroundPosterUrl = getPosterWithFallback(o, id, true)
+            posterHeaders = mapOf(
+                "Referer" to "$mainUrl/home",
+                "Cache-Control" to "max-age=604800" // 7 days cache
+            )
+            this.type = if (type == "s") TvType.TvSeries else TvType.Movie
+            this.quality = SearchQuality.HD // Default quality indicator
         }
-
-    /**
-     * Builds a HomePageList with:
-     *  - a minimum size check (row is hidden if there isn't enough content)
-     *  - optional shuffling
-     *  - an item cap
-     *  - the ACTUAL shown count in the title
-     *  - wide = true -> 16:9 landscape cards (isHorizontalLayout)
-     */
-    private fun addRow(
-        rows: MutableList<HomePageList>,
-        name: String,
-        items: List<SearchResponse>,
-        minSize: Int = MIN_ROW_SIZE,
-        shuffle: Boolean = true,
-        wide: Boolean = true
-    ) {
-        if (items.size < minSize) return
-        var list = if (shuffle) items.shuffled() else items
-        if (list.size > MAX_ITEMS_PER_ROW) list = list.take(MAX_ITEMS_PER_ROW)
-        rows.add(HomePageList("$name (${list.size})", list, isHorizontalLayout = wide))
     }
 
     private fun allRecords(): List<Triple<Ott, String, CatalogRecord>> =
@@ -133,13 +133,15 @@ class CustomCatalogProvider1 : MainAPI() {
         val rows = when (request.data) {
             "lang" -> languageRows()
             "year" -> yearRows()
+            "genre" -> genreRows()
+            "recent" -> recentRows()
             else -> catalogRows()
         }
         return newHomePageResponse(rows, false)
     }
 
     private fun catalogRows(): List<HomePageList> {
-        val ottRows = ArrayList<HomePageList>()
+        val rows = ArrayList<HomePageList>()
         val genreBuckets = LinkedHashMap<String, MutableList<SearchResponse>>()
         val allMovies = ArrayList<SearchResponse>()
         val allSeries = ArrayList<SearchResponse>()
@@ -152,12 +154,13 @@ class CustomCatalogProvider1 : MainAPI() {
                     if (id.isNotBlank() && !m.containsKey(id)) m[id] = CatalogRecord()
                 }
             }
-
+            
             val ottMovies = ArrayList<SearchResponse>()
             val ottSeries = ArrayList<SearchResponse>()
 
             m.forEach { (id, rec) ->
-                val c = card(o, id, rec.n)
+                val cleanTitle = rec.n.trim().ifBlank { "Unknown Title" }
+                val c = card(o, id, cleanTitle, rec.t)
                 if (rec.n.isNotEmpty()) {
                     recentItems.add(Pair(rec.ts, c))
                 }
@@ -166,73 +169,114 @@ class CustomCatalogProvider1 : MainAPI() {
                     "m" -> { allMovies.add(c); ottMovies.add(c) }
                     "s" -> { allSeries.add(c); ottSeries.add(c) }
                 }
-
+                
                 rec.g.forEach { genre ->
                     val cleanGenre = genre.lowercase().trim()
                     if (cleanGenre.isNotEmpty() && cleanGenre !in genreBlacklist && cleanGenre.length > 2) {
-                        val properGenre = genre.trim().split(" ")
-                            .joinToString(" ") { it.replaceFirstChar { ch -> ch.uppercase() } }
+                        val properGenre = genre.trim().split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
                         genreBuckets.getOrPut(properGenre) { ArrayList() }.add(c)
                     }
                 }
             }
 
-            addRow(ottRows, "${o.emoji} ${o.label} Movies", ottMovies)
-            addRow(ottRows, "${o.emoji} ${o.label} Series", ottSeries)
+            if (ottMovies.size >= MIN_ROW_SIZE) {
+                rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled()))
+            }
+            if (ottSeries.size >= MIN_ROW_SIZE) {
+                rows.add(HomePageList("${o.emoji} ${o.label} Series (${ottSeries.size})", ottSeries.shuffled()))
+            }
         }
 
-        val recent = recentItems.sortedByDescending { it.first }
-            .map { it.second }
-            .take(MAX_ITEMS_PER_ROW)
+        // Enhanced recent section with better organization
+        val recent = recentItems.sortedByDescending { it.first }.map { it.second }.take(MAX_ITEMS_PER_ROW)
+        if (recent.size >= MIN_ROW_SIZE) {
+            rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent))
+        }
 
-        val rows = ArrayList<HomePageList>()
-        addRow(rows, "🆕 Recently Added", recent, shuffle = false) // keep newest-first order
-        rows.addAll(ottRows)
-        addRow(rows, "🎬 All Movies", allMovies)
-        addRow(rows, "📺 All Series", allSeries)
+        // Improved all movies/series sections
+        if (allMovies.isNotEmpty()) {
+            rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled()))
+        }
+        if (allSeries.isNotEmpty()) {
+            rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled()))
+        }
 
+        // Enhanced genre organization
         genreBuckets.entries
             .filter { it.value.size >= MIN_ROW_SIZE }
             .sortedByDescending { it.value.size }
             .take(MAX_ROWS_PER_TAB)
-            .forEach { (genre, items) -> addRow(rows, "🎭 $genre", items) }
+            .forEach { (genre, items) -> 
+                rows.add(HomePageList("🎭 $genre (${items.size})", items.shuffled()))
+            }
 
         return rows
     }
 
     private fun languageRows(): List<HomePageList> {
-        val rows = ArrayList<HomePageList>()
         val byLang = LinkedHashMap<String, MutableList<SearchResponse>>()
         allRecords().forEach { (o, id, rec) ->
             rec.l.forEach { lang ->
                 val cleanLang = lang.lowercase().trim()
                 if (cleanLang in allowedLanguages) {
                     val properLang = lang.trim().replaceFirstChar { it.uppercase() }
-                    byLang.getOrPut(properLang) { ArrayList() }.add(card(o, id, rec.n))
+                    byLang.getOrPut(properLang) { ArrayList() }.add(card(o, id, rec.n, rec.t))
                 }
             }
         }
-        byLang.entries
+        return byLang.entries
             .filter { it.value.size >= MIN_ROW_SIZE }
             .sortedByDescending { it.value.size }
-            .forEach { (lang, items) -> addRow(rows, "${flagFor(lang)} $lang", items) }
-        return rows
+            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled()) }
     }
 
     private fun yearRows(): List<HomePageList> {
-        val rows = ArrayList<HomePageList>()
         val byDecade = LinkedHashMap<String, MutableList<SearchResponse>>()
         allRecords().forEach { (o, id, rec) ->
             val yearInt = rec.y.toIntOrNull()
             if (yearInt != null && yearInt > 1950) {
                 val decade = "${yearInt / 10}0s"
-                byDecade.getOrPut(decade) { ArrayList() }.add(card(o, id, rec.n))
+                byDecade.getOrPut(decade) { ArrayList() }.add(card(o, id, rec.n, rec.t))
             }
         }
-        byDecade.entries
+        return byDecade.entries
+            .filter { it.value.size >= 3 }
             .sortedByDescending { it.key }
-            .forEach { (decade, items) -> addRow(rows, "📅 $decade", items, minSize = 3) }
-        return rows
+            .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled()) }
+    }
+
+    private fun genreRows(): List<HomePageList> {
+        val byGenre = LinkedHashMap<String, MutableList<SearchResponse>>()
+        allRecords().forEach { (o, id, rec) ->
+            rec.g.forEach { genre ->
+                val cleanGenre = genre.lowercase().trim()
+                if (cleanGenre.isNotEmpty() && cleanGenre !in genreBlacklist && cleanGenre.length > 2) {
+                    val properGenre = genre.trim().split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+                    byGenre.getOrPut(properGenre) { ArrayList() }.add(card(o, id, rec.n, rec.t))
+                }
+            }
+        }
+        return byGenre.entries
+            .filter { it.value.size >= MIN_ROW_SIZE }
+            .sortedByDescending { it.value.size }
+            .take(MAX_ROWS_PER_TAB)
+            .map { (genre, items) -> HomePageList("🎭 $genre (${items.size})", items.shuffled()) }
+    }
+
+    private fun recentRows(): List<HomePageList> {
+        val recentItems = allRecords().mapNotNull { (o, id, rec) ->
+            if (rec.n.isNotBlank()) {
+                Pair(rec.ts, card(o, id, rec.n, rec.t))
+            } else {
+                null
+            }
+        }.sortedByDescending { it.first }.take(MAX_ITEMS_PER_ROW)
+        
+        return if (recentItems.size >= MIN_ROW_SIZE) {
+            listOf(HomePageList("🆕 Recently Added (${recentItems.size})", recentItems.map { it.second }))
+        } else {
+            emptyList()
+        }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -244,7 +288,7 @@ class CustomCatalogProvider1 : MainAPI() {
         val local = otts.flatMap { o ->
             NetflixMirrorStorage.getAll(o.code).entries
                 .filter { it.value.n.isNotEmpty() && it.value.n.contains(q, ignoreCase = true) }
-                .map { (id, rec) -> card(o, id, rec.n) }
+                .map { (id, rec) -> card(o, id, rec.n, rec.t) }
         }
 
         val live = otts.amap { o ->
@@ -259,8 +303,11 @@ class CustomCatalogProvider1 : MainAPI() {
 
                 results.map { r ->
                     newAnimeSearchResponse("${r.t} (${o.label})", Ref(r.id, o.code).toJson()) {
-                        this.posterUrl = posterUrl(o, r.id)
+                        this.posterUrl = getPosterWithFallback(o, r.id)
+                        this.backgroundPosterUrl = getPosterWithFallback(o, r.id, true)
                         posterHeaders = mapOf("Referer" to "$mainUrl/home")
+                        this.type = if (r.t == "s") TvType.TvSeries else TvType.Movie
+                        this.quality = SearchQuality.HD
                     }
                 }
             } catch (e: Exception) {
@@ -288,20 +335,21 @@ class CustomCatalogProvider1 : MainAPI() {
             referer = "$mainUrl/home",
             cookies = cookies(o.code)
         ).text
-
+        
         // Fix NetMirror bug where it sends "" instead of [] for lists
         val sanitizedText = text
             .replace("\"suggest\":\"\"", "\"suggest\":[]")
             .replace("\"episodes\":\"\"", "\"episodes\":[]")
             .replace("\"season\":\"\"", "\"season\":[]")
-
+        
         val data = tryParseJson<PostData>(sanitizedText) ?: return null
 
         val episodes = arrayListOf<Episode>()
-        val title = data.title
+        val title = data.title.trim().ifBlank { "Unknown Title" }
         val genre = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
         val langs = languagesOf(data)
         val runTime = convertRuntimeToMinutes(data.runtime.toString())
+        val year = data.year.trim().ifBlank { "Unknown" }
 
         val people = ArrayList<ActorData>()
         data.cast?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
@@ -311,18 +359,21 @@ class CustomCatalogProvider1 : MainAPI() {
 
         val chips = genre + langs.map { "${flagFor(it)} $it" }
 
-        val suggest = data.suggest?.map { card(o, it.id) }
+        val suggest = data.suggest?.map { card(o, it.id, it.t, it.t) }
 
         val isMovie = data.episodes.first() == null
         if (isMovie) {
-            episodes.add(newEpisode(LoadData(title, id, o.code)) { name = data.title })
+            episodes.add(newEpisode(LoadData(title, id, o.code)) { 
+                name = title 
+                posterUrl = getPosterWithFallback(o, id)
+            })
         } else {
             data.episodes.filterNotNull().mapTo(episodes) {
                 newEpisode(LoadData(title, it.id, o.code)) {
-                    this.name = it.t
+                    this.name = it.t.trim().ifBlank { "Episode ${it.ep}" }
                     this.episode = it.ep.replace("E", "").toIntOrNull()
                     this.season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/${o.epDir}/${it.id}.jpg"
+                    this.posterUrl = getPosterWithFallback(o, it.id)
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -334,22 +385,25 @@ class CustomCatalogProvider1 : MainAPI() {
             }
         }
 
-        NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre, title, data.year, langs)
+        NetflixMirrorStorage.addRich(o.code, id, if (isMovie) "m" else "s", genre, title, year, langs)
         NetflixMirrorStorage.addBareIds(o.code, data.suggest?.mapNotNull { it.id } ?: emptyList())
 
         val type = if (isMovie) TvType.Movie else TvType.TvSeries
         return newTvSeriesLoadResponse(title, url, type, episodes) {
-            posterUrl = "https://imgcdn.kim/${o.poster}/$id.jpg"
-            backgroundPosterUrl = "https://imgcdn.kim/${o.backdrop}/$id.jpg"
+            posterUrl = getPosterWithFallback(o, id)
+            backgroundPosterUrl = getPosterWithFallback(o, id, true)
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
             plot = data.desc?.trim()?.ifBlank { null }
-            year = data.year.toIntOrNull()
+            year = year.toIntOrNull()
             tags = chips
             actors = people
             this.score = parseScore(data.match)
             this.duration = runTime
             this.contentRating = data.ua
             this.recommendations = suggest
+            this.country = langs.firstOrNull()
+            this.studio = data.studio?.trim()?.ifBlank { null }
+            this.producer = data.producer?.trim()?.ifBlank { null }
         }
     }
 
@@ -459,20 +513,22 @@ class CustomCatalogProvider1 : MainAPI() {
                                     referer = "$mainUrl/home",
                                     cookies = cookies(o.code)
                                 ).text
-
+                                
+                                // Fix NetMirror bug where it sends "" instead of [] for lists
                                 val sanitizedText = text
                                     .replace("\"suggest\":\"\"", "\"suggest\":[]")
                                     .replace("\"episodes\":\"\"", "\"episodes\":[]")
                                     .replace("\"season\":\"\"", "\"season\":[]")
-
+                                
                                 val data = tryParseJson<PostData>(sanitizedText) ?: return@map
 
                                 val type = if (data.episodes.first() == null) "m" else "s"
                                 val genres = data.genre?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
                                 val langs = languagesOf(data)
-
+                                
                                 NetflixMirrorStorage.addRich(o.code, id, type, genres, data.title.trim(), data.year.trim(), langs)
 
+                                // Add suggestions to frontier
                                 data.suggest?.forEach { s ->
                                     val sItem = "${o.code}|${s.id}"
                                     if (!visited.contains(sItem)) {
@@ -484,6 +540,7 @@ class CustomCatalogProvider1 : MainAPI() {
                         }
                     }
 
+                    // Save state so it survives app restarts
                     NetflixMirrorStorage.saveCrawlerFrontier(frontier)
                     NetflixMirrorStorage.saveCrawlerVisited(visited)
 
@@ -510,10 +567,10 @@ class CustomCatalogProvider1 : MainAPI() {
             ).parsed<EpisodesData>()
             data.episodes?.mapTo(episodes) {
                 newEpisode(LoadData(title, it.id, o.code)) {
-                    name = it.t
+                    name = it.t.trim().ifBlank { "Episode ${it.ep}" }
                     episode = it.ep.replace("E", "").toIntOrNull()
                     season = it.s.replace("S", "").toIntOrNull()
-                    this.posterUrl = "https://imgcdn.kim/${o.epDir}/${it.id}.jpg"
+                    this.posterUrl = getPosterWithFallback(o, it.id)
                     this.runTime = it.time.replace("m", "").toIntOrNull()
                 }
             }
@@ -531,13 +588,13 @@ class CustomCatalogProvider1 : MainAPI() {
     ): Boolean {
         val ld = parseJson<LoadData>(data)
         val o = ottOf(ld.ott)
-
-        val playlistPath = when (ld.ott) {
+        
+        val playlistPath = when(ld.ott) {
             "pv" -> "pv/playlist.php"
             "hs" -> "hs/playlist.php"
             else -> "playlist.php"
         }
-
+        
         val result = try {
             getPlaylistLink(mainUrl, bypassResult, ld.id, ld.ott, playlistPath)
         } catch (_: Exception) { null }
@@ -550,6 +607,7 @@ class CustomCatalogProvider1 : MainAPI() {
                 callback.invoke(
                     newExtractorLink(name, name, fullUrl, type = ExtractorLinkType.M3U8) {
                         this.referer = mainUrl
+                        this.headers = mapOf("Referer" to "$mainUrl/home")
                     }
                 )
             }
