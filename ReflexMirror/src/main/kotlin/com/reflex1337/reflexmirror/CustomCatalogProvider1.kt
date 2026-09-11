@@ -20,8 +20,8 @@ import kotlinx.coroutines.delay
 class CustomCatalogProvider1 : MainAPI() {
     companion object {
         var context: Context? = null
-        private const val MIN_ROW_SIZE = 25
-        private const val MAX_ROWS_PER_TAB = 100
+        private const val MIN_ROW_SIZE = 15
+        private const val MAX_ROWS_PER_TAB = 150
         private const val MAX_ITEMS_PER_ROW = 500
         private const val CRAWLER_BATCH_SIZE = 5
     }
@@ -69,9 +69,9 @@ class CustomCatalogProvider1 : MainAPI() {
     )
 
     private val otts = listOf(
-        Ott("nf", "Netflix", "", "poster/v", "poster/h", "epimg", "🔴"),
-        Ott("pv", "Prime Video", "pv/", "pv/v", "pv/h", "pvepimg", "🟣"),
-        Ott("hs", "Hotstar", "hs/", "hs/v", "hs/h", "hsepimg", "🟠")
+        Ott("nf", "Netflix", "", "poster/h", "poster/h", "epimg", "🔴"),
+        Ott("pv", "Prime Video", "pv/", "pv/h", "pv/h", "pvepimg", "🟣"),
+        Ott("hs", "Hotstar", "hs/", "hs/h", "hs/h", "hsepimg", "🟠")
     )
 
     private fun ottOf(code: String): Ott = otts.firstOrNull { it.code == code } ?: otts[0]
@@ -155,23 +155,23 @@ class CustomCatalogProvider1 : MainAPI() {
             }
 
             if (ottMovies.size >= MIN_ROW_SIZE) {
-                rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled(), isHorizontalImages = false))
+                rows.add(HomePageList("${o.emoji} ${o.label} Movies (${ottMovies.size})", ottMovies.shuffled(), isHorizontalImages = true))
             }
             if (ottSeries.size >= MIN_ROW_SIZE) {
-                rows.add(HomePageList("${o.emoji} ${o.label} Series (${ottSeries.size})", ottSeries.shuffled(), isHorizontalImages = false))
+                rows.add(HomePageList("${o.emoji} ${o.label} Series (${ottSeries.size})", ottSeries.shuffled(), isHorizontalImages = true))
             }
         }
 
         val recent = recentItems.sortedByDescending { it.first }.map { it.second }.take(MAX_ITEMS_PER_ROW)
         if (recent.size >= MIN_ROW_SIZE) {
-            rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent, isHorizontalImages = false))
+            rows.add(0, HomePageList("🆕 Recently Added (${recent.size})", recent, isHorizontalImages = true))
         }
 
         if (allMovies.isNotEmpty()) {
-            rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled(), isHorizontalImages = false))
+            rows.add(HomePageList("🎬 All Movies (${allMovies.size})", allMovies.shuffled(), isHorizontalImages = true))
         }
         if (allSeries.isNotEmpty()) {
-            rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled(), isHorizontalImages = false))
+            rows.add(HomePageList("📺 All Series (${allSeries.size})", allSeries.shuffled(), isHorizontalImages = true))
         }
 
         genreBuckets.entries
@@ -179,7 +179,7 @@ class CustomCatalogProvider1 : MainAPI() {
             .sortedByDescending { it.value.size }
             .take(MAX_ROWS_PER_TAB)
             .forEach { (genre, items) ->
-                rows.add(HomePageList("🎭 $genre (${items.size})", items.shuffled(), isHorizontalImages = false))
+                rows.add(HomePageList("🎭 $genre (${items.size})", items.shuffled(), isHorizontalImages = true))
             }
 
         return rows
@@ -199,7 +199,7 @@ class CustomCatalogProvider1 : MainAPI() {
         return byLang.entries
             .filter { it.value.size >= MIN_ROW_SIZE }
             .sortedByDescending { it.value.size }
-            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled(), isHorizontalImages = false) }
+            .map { (lang, items) -> HomePageList("${flagFor(lang)} $lang (${items.size})", items.shuffled(), isHorizontalImages = true) }
     }
 
     private fun yearRows(): List<HomePageList> {
