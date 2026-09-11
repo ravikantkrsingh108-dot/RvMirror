@@ -17,7 +17,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
-class CustomCatalogProvider : MainAPI() {
+class CustomCatalogProvider1 : MainAPI() {
     companion object {
         var context: Context? = null
         private const val MIN_ROW_SIZE = 25
@@ -50,7 +50,7 @@ class CustomCatalogProvider : MainAPI() {
     )
     override var lang = "en"
     override var mainUrl = "https://net52.cc"
-    override var name = "All NetMirror"
+    override var name = "NetMirror"
     override val hasMainPage = true
 
     override val mainPage = mainPageOf(
