@@ -24,15 +24,6 @@ class CustomCatalogProvider1 : MainAPI() {
         private const val MAX_ROWS_PER_TAB = 100
         private const val MAX_ITEMS_PER_ROW = 500
         private const val CRAWLER_BATCH_SIZE = 5
-
-        // --- LAYOUT SETTINGS ---
-        // true  = horizontal scrolling strips (wide/landscape cards, uses backdrop image)
-        // false = normal vertical grid rows (portrait posters, app decides column count)
-        private const val HORIZONTAL_ROWS = true
-
-        // When HORIZONTAL_ROWS is on, each strip shows at most this many items.
-        // (A horizontal strip of 500 items is unusable — no jumping around.)
-        private const val MAX_ITEMS_HORIZONTAL = 40
     }
 
     override val supportedTypes = setOf(
@@ -43,7 +34,7 @@ class CustomCatalogProvider1 : MainAPI() {
     )
     override var lang = "en"
     override var mainUrl = "https://net52.cc"
-    override var name = "All NetMirror1"
+    override var name = "NetMirror"
     override val hasMainPage = true
 
     override val mainPage = mainPageOf(
@@ -98,13 +89,9 @@ class CustomCatalogProvider1 : MainAPI() {
 
     private fun posterUrl(o: Ott, id: String) = "https://imgcdn.kim/${o.poster}/$id.jpg"
 
-    // Wide/landscape variant — used by the app for horizontal rows
-    private fun backdropUrl(o: Ott, id: String) = "https://imgcdn.kim/${o.backdrop}/$id.jpg"
-
     private fun card(o: Ott, id: String, title: String = ""): SearchResponse =
         newAnimeSearchResponse(title, Ref(id, o.code).toJson()) {
             this.posterUrl = posterUrl(o, id)
-            this.backgroundPosterUrl = backdropUrl(o, id)
             posterHeaders = mapOf("Referer" to "$mainUrl/home")
         }
 
@@ -112,7 +99,7 @@ class CustomCatalogProvider1 : MainAPI() {
      * Builds a HomePageList with:
      *  - a minimum size check (row is hidden if there isn't enough content)
      *  - optional shuffling
-     *  - item cap for horizontal strips
+     *  - an item cap
      *  - the ACTUAL shown count in the title
      */
     private fun addRow(
@@ -124,12 +111,8 @@ class CustomCatalogProvider1 : MainAPI() {
     ) {
         if (items.size < minSize) return
         var list = if (shuffle) items.shuffled() else items
-        if (HORIZONTAL_ROWS && list.size > MAX_ITEMS_HORIZONTAL) {
-            list = list.take(MAX_ITEMS_HORIZONTAL)
-        }
-        rows.add(
-            HomePageList("$name (${list.size})", list, isHorizontalLayout = HORIZONTAL_ROWS)
-        )
+        if (list.size > MAX_ITEMS_PER_ROW) list = list.take(MAX_ITEMS_PER_ROW)
+        rows.add(HomePageList("$name (${list.size})", list))
     }
 
     private fun allRecords(): List<Triple<Ott, String, CatalogRecord>> =
@@ -275,7 +258,6 @@ class CustomCatalogProvider1 : MainAPI() {
                 results.map { r ->
                     newAnimeSearchResponse("${r.t} (${o.label})", Ref(r.id, o.code).toJson()) {
                         this.posterUrl = posterUrl(o, r.id)
-                        this.backgroundPosterUrl = backdropUrl(o, r.id)
                         posterHeaders = mapOf("Referer" to "$mainUrl/home")
                     }
                 }
