@@ -214,7 +214,7 @@ class CustomCatalogProvider1 : MainAPI() {
         return byDecade.entries
             .filter { it.value.size >= 3 }
             .sortedByDescending { it.key }
-            .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled(), isHorizontalImages = false) }
+            .map { (decade, items) -> HomePageList("📅 $decade (${items.size})", items.shuffled(), isHorizontalImages = true) }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
