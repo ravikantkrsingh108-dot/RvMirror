@@ -34,6 +34,7 @@ class CustomCatalogProvider1 : MainAPI() {
     )
     override var lang = "en"
     override var mainUrl = "https://net52.cc"
+    // Must be DIFFERENT from the original provider's name (both may be installed at once)
     override var name = "NetMirror"
     override val hasMainPage = true
 
@@ -53,7 +54,6 @@ class CustomCatalogProvider1 : MainAPI() {
         "international", "indian", "korean", "us", "uk", "audio"
     )
 
-    // Only show these languages in the By Language tab
     private val allowedLanguages = setOf(
         "hindi", "english"
     )
@@ -458,7 +458,6 @@ class CustomCatalogProvider1 : MainAPI() {
                                     cookies = cookies(o.code)
                                 ).text
 
-                                // Fix NetMirror bug where it sends "" instead of [] for lists
                                 val sanitizedText = text
                                     .replace("\"suggest\":\"\"", "\"suggest\":[]")
                                     .replace("\"episodes\":\"\"", "\"episodes\":[]")
@@ -472,7 +471,6 @@ class CustomCatalogProvider1 : MainAPI() {
 
                                 NetflixMirrorStorage.addRich(o.code, id, type, genres, data.title.trim(), data.year.trim(), langs)
 
-                                // Add suggestions to frontier
                                 data.suggest?.forEach { s ->
                                     val sItem = "${o.code}|${s.id}"
                                     if (!visited.contains(sItem)) {
@@ -484,7 +482,6 @@ class CustomCatalogProvider1 : MainAPI() {
                         }
                     }
 
-                    // Save state so it survives app restarts
                     NetflixMirrorStorage.saveCrawlerFrontier(frontier)
                     NetflixMirrorStorage.saveCrawlerVisited(visited)
 
